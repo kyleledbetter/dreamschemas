@@ -8,23 +8,26 @@ const testimonials = [
     name: "Sarah Chen",
     role: "Full-stack Developer",
     company: "TechCorp",
-    content: "Dreamschemas saved me hours of manual schema design. The AI suggestions were spot-on and the visual editor made refinements effortless.",
-    avatar: "SC"
+    content:
+      "Dreamschemas saved me hours of manual schema design. The AI suggestions were spot-on and the visual editor made refinements effortless.",
+    avatar: "SC",
   },
   {
     name: "Marcus Rodriguez",
     role: "Data Engineer",
     company: "DataFlow Inc",
-    content: "Finally, a tool that understands my CSV data better than I do. The relationship detection is incredibly accurate.",
-    avatar: "MR"
+    content:
+      "Finally, a tool that understands my CSV data better than I do. The relationship detection is incredibly accurate.",
+    avatar: "MR",
   },
   {
     name: "Emily Watson",
     role: "Product Manager",
     company: "StartupXYZ",
-    content: "Our team went from CSV to production database in under 10 minutes. This tool is a game-changer for rapid prototyping.",
-    avatar: "EW"
-  }
+    content:
+      "Our team went from CSV to production database in under 10 minutes. This tool is a game-changer for rapid prototyping.",
+    avatar: "EW",
+  },
 ];
 
 const stats = [
@@ -32,25 +35,25 @@ const stats = [
     icon: Github,
     value: "2.1k",
     label: "GitHub Stars",
-    color: "text-yellow-500"
+    color: "text-yellow-500",
   },
   {
     icon: Users,
     value: "500+",
     label: "Developers",
-    color: "text-blue-500"
+    color: "text-blue-500",
   },
   {
     icon: Zap,
     value: "10k+",
     label: "Schemas Generated",
-    color: "text-green-500"
-  }
+    color: "text-green-500",
+  },
 ];
 
 export function SocialProof() {
   return (
-    <section className="py-24">
+    <section className="py-24" id="social-proof">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
         {/* Stats */}
         <motion.div
@@ -66,7 +69,7 @@ export function SocialProof() {
               building on Supabase
             </span>
           </h2>
-          
+
           <div className="grid grid-cols-3 gap-8 max-w-2xl mx-auto mt-12">
             {stats.map((stat, index) => (
               <motion.div
@@ -80,8 +83,12 @@ export function SocialProof() {
                 <div className="flex justify-center mb-2">
                   <stat.icon className={`h-8 w-8 ${stat.color}`} />
                 </div>
-                <div className="text-3xl font-bold text-foreground">{stat.value}</div>
-                <div className="text-sm text-muted-foreground">{stat.label}</div>
+                <div className="text-3xl font-bold text-foreground">
+                  {stat.value}
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {stat.label}
+                </div>
               </motion.div>
             ))}
           </div>
@@ -102,13 +109,16 @@ export function SocialProof() {
                 {/* Stars */}
                 <div className="flex space-x-1 mb-4">
                   {[...Array(5)].map((_, i) => (
-                    <Star key={i} className="h-4 w-4 fill-yellow-400 text-yellow-400" />
+                    <Star
+                      key={i}
+                      className="h-4 w-4 fill-yellow-400 text-yellow-400"
+                    />
                   ))}
                 </div>
 
                 {/* Content */}
                 <p className="text-muted-foreground mb-6 leading-relaxed">
-                  "{testimonial.content}"
+                  &quot;{testimonial.content}&quot;
                 </p>
 
                 {/* Author */}
@@ -117,7 +127,9 @@ export function SocialProof() {
                     {testimonial.avatar}
                   </div>
                   <div>
-                    <div className="font-semibold text-foreground">{testimonial.name}</div>
+                    <div className="font-semibold text-foreground">
+                      {testimonial.name}
+                    </div>
                     <div className="text-sm text-muted-foreground">
                       {testimonial.role} at {testimonial.company}
                     </div>

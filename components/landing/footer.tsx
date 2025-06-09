@@ -8,32 +8,36 @@ const footerLinks = {
     { name: "Features", href: "#features" },
     { name: "How it Works", href: "#how-it-works" },
     { name: "Pricing", href: "#pricing" },
-    { name: "Demo", href: "#demo" }
+    { name: "Demo", href: "#demo" },
   ],
   resources: [
     { name: "Documentation", href: "/docs" },
     { name: "API Reference", href: "/docs/api" },
     { name: "Guides", href: "/docs/guides" },
-    { name: "Examples", href: "/docs/examples" }
+    { name: "Examples", href: "/docs/examples" },
   ],
   company: [
     { name: "About", href: "/about" },
     { name: "Blog", href: "/blog" },
     { name: "Careers", href: "/careers" },
-    { name: "Contact", href: "/contact" }
+    { name: "Contact", href: "/contact" },
   ],
   legal: [
     { name: "Privacy Policy", href: "/privacy" },
     { name: "Terms of Service", href: "/terms" },
     { name: "Cookie Policy", href: "/cookies" },
-    { name: "Security", href: "/security" }
-  ]
+    { name: "Security", href: "/security" },
+  ],
 };
 
 const socialLinks = [
-  { name: "GitHub", href: "https://github.com/dreamschemas/dreamschemas", icon: Github },
+  {
+    name: "GitHub",
+    href: "https://github.com/dreamschemas/dreamschemas",
+    icon: Github,
+  },
   { name: "Twitter", href: "https://twitter.com/dreamschemas", icon: Twitter },
-  { name: "Email", href: "mailto:hello@dreamschemas.com", icon: Mail }
+  { name: "Email", href: "mailto:hello@dreamschemas.com", icon: Mail },
 ];
 
 export function Footer() {
@@ -51,8 +55,9 @@ export function Footer() {
               <span className="text-xl font-bold">Dreamschemas</span>
             </Link>
             <p className="text-muted-foreground mb-6 max-w-md">
-              Transform CSV data into production-ready Supabase schemas with AI-powered 
-              analysis and visual editing. Built for the Supabase community.
+              Transform CSV data into production-ready Supabase schemas with
+              AI-powered analysis and visual editing. Built for the Supabase
+              community.
             </p>
             <div className="flex space-x-4">
               {socialLinks.map((social) => (
@@ -122,7 +127,7 @@ export function Footer() {
         {/* Bottom */}
         <div className="border-t border-border mt-12 pt-8 flex flex-col sm:flex-row justify-between items-center">
           <p className="text-muted-foreground text-sm">
-            © 2025 Dreamschemas. Built for the Supabase community.
+            © 2025 Dream, Inc. Built for the Supabase community.
           </p>
           <div className="flex items-center space-x-4 mt-4 sm:mt-0">
             <span className="text-sm text-muted-foreground">Powered by</span>
@@ -136,12 +141,12 @@ export function Footer() {
             </Link>
             <span className="text-muted-foreground">•</span>
             <Link
-              href="https://ai.google.dev"
+              href="https://dreambase.ai"
               target="_blank"
               rel="noopener noreferrer"
               className="text-sm font-medium text-primary hover:text-primary/80 transition-colors"
             >
-              Gemini AI
+              Dreambase.ai
             </Link>
           </div>
         </div>

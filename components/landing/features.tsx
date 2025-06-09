@@ -7,39 +7,45 @@ const features = [
   {
     icon: Brain,
     title: "Intelligent AI Analysis",
-    description: "Upload CSV files and let Gemini 2.5 Flash analyze your data structure. Automatically detects column types, relationships, and constraints with 90%+ accuracy.",
-    gradient: "from-purple-500 to-pink-500"
+    description:
+      "Upload CSV files and let Gemini 2.5 Flash analyze your data structure. Automatically detects column types, relationships, and constraints with 90%+ accuracy.",
+    gradient: "from-purple-500 to-pink-500",
   },
   {
     icon: Palette,
     title: "Visual Schema Editor",
-    description: "Interactive drag-and-drop editor powered by React Flow. Modify tables, relationships, and constraints with real-time validation and instant feedback.",
-    gradient: "from-blue-500 to-cyan-500"
+    description:
+      "Interactive drag-and-drop editor powered by React Flow. Modify tables, relationships, and constraints with real-time validation and instant feedback.",
+    gradient: "from-blue-500 to-cyan-500",
   },
   {
     icon: Rocket,
     title: "One-Click Deployment",
-    description: "Deploy directly to new or existing Supabase projects. Generate production-ready migrations with PostgreSQL best practices built-in.",
-    gradient: "from-green-500 to-emerald-500"
+    description:
+      "Deploy directly to new or existing Supabase projects. Generate production-ready migrations with PostgreSQL best practices built-in.",
+    gradient: "from-green-500 to-emerald-500",
   },
   {
     icon: FileText,
     title: "Migration Scripts",
-    description: "Export declarative SQL migration files compatible with Supabase CLI. Version control your schema changes with confidence.",
-    gradient: "from-orange-500 to-red-500"
+    description:
+      "Export declarative SQL migration files compatible with Supabase CLI. Version control your schema changes with confidence.",
+    gradient: "from-orange-500 to-red-500",
   },
   {
     icon: Shield,
     title: "Secure Processing",
-    description: "All CSV data processed client-side or in ephemeral containers. Your sensitive data never leaves your control or gets stored on our servers.",
-    gradient: "from-indigo-500 to-purple-500"
+    description:
+      "All CSV data processed client-side or in ephemeral containers. Your sensitive data never leaves your control or gets stored on our servers.",
+    gradient: "from-indigo-500 to-purple-500",
   },
   {
     icon: Zap,
     title: "Lightning Fast",
-    description: "Optimized for performance with sample-based analysis. Process large datasets efficiently while maintaining accuracy and speed.",
-    gradient: "from-yellow-500 to-orange-500"
-  }
+    description:
+      "Optimized for performance with sample-based analysis. Process large datasets efficiently while maintaining accuracy and speed.",
+    gradient: "from-yellow-500 to-orange-500",
+  },
 ];
 
 export function Features() {
@@ -60,8 +66,9 @@ export function Features() {
             </span>
           </h2>
           <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
-            From intelligent analysis to visual editing, we've built the complete toolkit 
-            for transforming your CSV data into production-ready database schemas.
+            From intelligent analysis to visual editing, we&apos;ve built the
+            complete toolkit for transforming your CSV data into
+            production-ready database schemas.
           </p>
         </motion.div>
 
@@ -78,7 +85,9 @@ export function Features() {
               <div className="relative bg-card border border-border rounded-2xl p-8 h-full hover:shadow-xl transition-all duration-300 hover:-translate-y-1">
                 {/* Icon */}
                 <div className="relative mb-6">
-                  <div className={`w-16 h-16 rounded-2xl bg-gradient-to-br ${feature.gradient} p-0.5`}>
+                  <div
+                    className={`w-16 h-16 rounded-2xl bg-gradient-to-br ${feature.gradient} p-0.5`}
+                  >
                     <div className="w-full h-full bg-card rounded-2xl flex items-center justify-center">
                       <feature.icon className="h-8 w-8 text-foreground" />
                     </div>

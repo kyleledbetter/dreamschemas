@@ -3,28 +3,33 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Menu, X, Database } from "lucide-react";
+import { Menu, X, Database, Sun, Moon } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useTheme } from "next-themes";
 
 export function Header() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const { theme, setTheme } = useTheme();
 
   const toggleMenu = () => setIsMenuOpen(!isMenuOpen);
 
   const navItems = [
     { href: "#features", label: "Features" },
+    { href: "#demo", label: "Demo" },
     { href: "#how-it-works", label: "How it Works" },
-    { href: "#pricing", label: "Pricing" },
     { href: "/docs", label: "Docs" },
     { href: "https://github.com/dreamschemas/dreamschemas", label: "GitHub" },
   ];
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-md border-b border-border/40">
+    <header
+      className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-md border-b border-border/40"
+      id="header"
+    >
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
-          <Link href="/" className="flex items-center space-x-2 group">
+          <Link href="#header" className="flex items-center space-x-2 group">
             <div className="relative">
               <Database className="h-8 w-8 text-primary transition-transform group-hover:scale-110" />
               <div className="absolute -top-1 -right-1 w-3 h-3 bg-accent rounded-full animate-pulse" />
@@ -50,10 +55,26 @@ export function Header() {
 
           {/* CTA Button */}
           <div className="hidden md:flex items-center space-x-4">
-            <Button asChild className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg hover:shadow-xl transition-all">
+            <Button
+              asChild
+              className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg hover:shadow-xl transition-all"
+            >
               <Link href="/auth/login">Connect Supabase</Link>
             </Button>
           </div>
+
+          {/* Theme Toggle */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          >
+            {theme === "dark" ? (
+              <Sun className="h-6 w-6" />
+            ) : (
+              <Moon className="h-6 w-6" />
+            )}
+          </Button>
 
           {/* Mobile Menu Button */}
           <button
@@ -61,7 +82,11 @@ export function Header() {
             className="md:hidden p-2 rounded-md hover:bg-accent transition-colors"
             aria-label="Toggle menu"
           >
-            {isMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+            {isMenuOpen ? (
+              <X className="h-6 w-6" />
+            ) : (
+              <Menu className="h-6 w-6" />
+            )}
           </button>
         </div>
 
@@ -87,7 +112,10 @@ export function Header() {
                   </Link>
                 ))}
                 <div className="px-4 pt-4">
-                  <Button asChild className="w-full bg-primary hover:bg-primary/90 text-primary-foreground">
+                  <Button
+                    asChild
+                    className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+                  >
                     <Link href="/auth/login">Connect Supabase</Link>
                   </Button>
                 </div>
