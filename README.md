@@ -1,24 +1,25 @@
-<a href="https://demo-nextjs-with-supabase.vercel.app/">
-  <img alt="Next.js and Supabase Starter Kit - the fastest way to build apps with Next.js and Supabase" src="https://demo-nextjs-with-supabase.vercel.app/opengraph-image.png">
-  <h1 align="center">Next.js and Supabase Starter Kit</h1>
-</a>
+# Dreamschema - CSV to Supabase Schema Converter
 
 <p align="center">
- The fastest way to build apps with Next.js and Supabase
+ Convert CSV files into production-ready Postgres database schemas for Supabase with AI-powered schema generation and visual editing.
 </p>
 
 <p align="center">
   <a href="#features"><strong>Features</strong></a> ·
   <a href="#demo"><strong>Demo</strong></a> ·
-  <a href="#deploy-to-vercel"><strong>Deploy to Vercel</strong></a> ·
   <a href="#clone-and-run-locally"><strong>Clone and run locally</strong></a> ·
   <a href="#feedback-and-issues"><strong>Feedback and issues</strong></a>
-  <a href="#more-supabase-examples"><strong>More Examples</strong></a>
 </p>
 <br/>
 
 ## Features
 
+- **AI-Powered Schema Generation**: Uses Gemini 2.5 Flash to analyze CSV files and generate intelligent Postgres schemas
+- **Visual Schema Editor**: Interactive graph-based editor using React Flow for visualizing and editing table relationships
+- **Supabase Integration**: Seamless OAuth integration with Supabase for project creation and schema deployment
+- **Multi-CSV Support**: Process single or multiple CSV files to create comprehensive database schemas
+- **Production-Ready**: Generates proper Postgres schemas with UUID primary keys, foreign key relationships, and best practices
+- **Migration Scripts**: Generates Supabase-compatible SQL migration files for easy deployment
 - Works across the entire [Next.js](https://nextjs.org) stack
   - App Router
   - Pages Router
@@ -27,60 +28,42 @@
   - Server
   - It just works!
 - supabase-ssr. A package to configure Supabase Auth to use cookies
-- Password-based authentication block installed via the [Supabase UI Library](https://supabase.com/ui/docs/nextjs/password-based-auth)
-- Styling with [Tailwind CSS](https://tailwindcss.com)
+- Password-based authentication with [Supabase Auth](https://supabase.com/auth)
+- Styling with [Tailwind CSS](https://tailwindcss.com) using Supabase's black and green theme
 - Components with [shadcn/ui](https://ui.shadcn.com/)
-- Optional deployment with [Supabase Vercel Integration and Vercel deploy](#deploy-your-own)
-  - Environment variables automatically assigned to Vercel project
 
 ## Demo
 
-You can view a fully working demo at [demo-nextjs-with-supabase.vercel.app](https://demo-nextjs-with-supabase.vercel.app/).
-
-## Deploy to Vercel
-
-Vercel deployment will guide you through creating a Supabase account and project.
-
-After installation of the Supabase integration, all relevant environment variables will be assigned to the project so the deployment is fully functioning.
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fvercel%2Fnext.js%2Ftree%2Fcanary%2Fexamples%2Fwith-supabase&project-name=nextjs-with-supabase&repository-name=nextjs-with-supabase&demo-title=nextjs-with-supabase&demo-description=This+starter+configures+Supabase+Auth+to+use+cookies%2C+making+the+user%27s+session+available+throughout+the+entire+Next.js+app+-+Client+Components%2C+Server+Components%2C+Route+Handlers%2C+Server+Actions+and+Middleware.&demo-url=https%3A%2F%2Fdemo-nextjs-with-supabase.vercel.app%2F&external-id=https%3A%2F%2Fgithub.com%2Fvercel%2Fnext.js%2Ftree%2Fcanary%2Fexamples%2Fwith-supabase&demo-image=https%3A%2F%2Fdemo-nextjs-with-supabase.vercel.app%2Fopengraph-image.png)
-
-The above will also clone the Starter kit to your GitHub, you can clone that locally and develop locally.
-
-If you wish to just develop locally and not deploy to Vercel, [follow the steps below](#clone-and-run-locally).
+Coming soon! The application will be deployed and available for testing.
 
 ## Clone and run locally
 
 1. You'll first need a Supabase project which can be made [via the Supabase dashboard](https://database.new)
 
-2. Create a Next.js app using the Supabase Starter template npx command
+2. Clone this repository
 
    ```bash
-   npx create-next-app --example with-supabase with-supabase-app
+   git clone https://github.com/your-username/dreamschema.git
+   cd dreamschema
    ```
+
+3. Install dependencies
 
    ```bash
-   yarn create next-app --example with-supabase with-supabase-app
+   npm install
    ```
 
-   ```bash
-   pnpm create next-app --example with-supabase with-supabase-app
-   ```
-
-3. Use `cd` to change into the app's directory
-
-   ```bash
-   cd with-supabase-app
-   ```
-
-4. Rename `.env.example` to `.env.local` and update the following:
+4. Create a `.env.local` file and update the following:
 
    ```
    NEXT_PUBLIC_SUPABASE_URL=[INSERT SUPABASE PROJECT URL]
    NEXT_PUBLIC_SUPABASE_ANON_KEY=[INSERT SUPABASE PROJECT API ANON KEY]
+   GEMINI_API_KEY=[INSERT YOUR GEMINI API KEY]
    ```
 
    Both `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` can be found in [your Supabase project's API settings](https://supabase.com/dashboard/project/_?showConnect=true)
+
+   Get your Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey)
 
 5. You can now run the Next.js local development server:
 
@@ -88,15 +71,30 @@ If you wish to just develop locally and not deploy to Vercel, [follow the steps 
    npm run dev
    ```
 
-   The starter kit should now be running on [localhost:3000](http://localhost:3000/).
-
-6. This template comes with the default shadcn/ui style initialized. If you instead want other ui.shadcn styles, delete `components.json` and [re-install shadcn/ui](https://ui.shadcn.com/docs/installation/next)
+   Dreamschema should now be running on [localhost:3000](http://localhost:3000/).
 
 > Check out [the docs for Local Development](https://supabase.com/docs/guides/getting-started/local-development) to also run Supabase locally.
 
+## How it works
+
+1. **Upload CSV Files**: Upload one or multiple CSV files through the intuitive drag-and-drop interface
+2. **AI Analysis**: Gemini 2.5 Flash analyzes your CSV headers and sample data to infer optimal database schema
+3. **Visual Editing**: Use the interactive React Flow graph to visualize and edit table structures, relationships, and column types
+4. **Schema Generation**: Generate production-ready Postgres migration scripts with proper UUID keys and relationships
+5. **Supabase Integration**: Connect your Supabase account and deploy schemas directly to your projects
+
+## Technology Stack
+
+- **Frontend**: Next.js 15.3, React 19, TypeScript
+- **Styling**: Tailwind CSS with Supabase theme, shadcn/ui components
+- **AI**: Google Gemini 2.5 Flash for intelligent schema generation
+- **Visualization**: React Flow for interactive schema diagrams
+- **Database**: Supabase (Postgres) with OAuth integration
+- **Deployment**: Netlify, Vercel, or any Node.js hosting platform
+
 ## Feedback and issues
 
-Please file feedback and issues over on the [Supabase GitHub org](https://github.com/supabase/supabase/issues/new/choose).
+Please file feedback and issues over on the [GitHub repository](https://github.com/your-username/dreamschema/issues/new).
 
 ## More Supabase examples
 
