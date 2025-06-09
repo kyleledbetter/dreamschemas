@@ -53,40 +53,42 @@ export function Header() {
             ))}
           </nav>
 
-          {/* CTA Button */}
-          <div className="hidden md:flex items-center space-x-4">
+          <div className="flex items-center space-x-2">
+            {/* CTA Button */}
+            <div className="hidden md:flex items-center space-x-4">
+              <Button
+                asChild
+                className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg hover:shadow-xl transition-all"
+              >
+                <Link href="/auth/login">Connect Supabase</Link>
+              </Button>
+            </div>
+
+            {/* Theme Toggle */}
             <Button
-              asChild
-              className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg hover:shadow-xl transition-all"
+              variant="ghost"
+              size="icon"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
             >
-              <Link href="/auth/login">Connect Supabase</Link>
+              <>
+                <Sun className="size-6 hidden dark:block" />
+                <Moon className="size-6 dark:hidden" />
+              </>
             </Button>
+
+            {/* Mobile Menu Button */}
+            <button
+              onClick={toggleMenu}
+              className="md:hidden p-2 rounded-md hover:bg-accent transition-colors"
+              aria-label="Toggle menu"
+            >
+              {isMenuOpen ? (
+                <X className="size-6" />
+              ) : (
+                <Menu className="size-6" />
+              )}
+            </button>
           </div>
-
-          {/* Theme Toggle */}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          >
-            <>
-              <Sun className="size-6 hidden dark:block" />
-              <Moon className="size-6 dark:hidden" />
-            </>
-          </Button>
-
-          {/* Mobile Menu Button */}
-          <button
-            onClick={toggleMenu}
-            className="md:hidden p-2 rounded-md hover:bg-accent transition-colors"
-            aria-label="Toggle menu"
-          >
-            {isMenuOpen ? (
-              <X className="size-6" />
-            ) : (
-              <Menu className="size-6" />
-            )}
-          </button>
         </div>
 
         {/* Mobile Navigation */}
