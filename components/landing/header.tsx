@@ -69,11 +69,10 @@ export function Header() {
             size="icon"
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
           >
-            {theme === "dark" ? (
-              <Sun className="h-6 w-6" />
-            ) : (
-              <Moon className="h-6 w-6" />
-            )}
+            <>
+              <Sun className="size-6 hidden dark:block" />
+              <Moon className="size-6 dark:hidden" />
+            </>
           </Button>
 
           {/* Mobile Menu Button */}
@@ -83,9 +82,9 @@ export function Header() {
             aria-label="Toggle menu"
           >
             {isMenuOpen ? (
-              <X className="h-6 w-6" />
+              <X className="size-6" />
             ) : (
-              <Menu className="h-6 w-6" />
+              <Menu className="size-6" />
             )}
           </button>
         </div>
