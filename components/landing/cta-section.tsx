@@ -55,7 +55,7 @@ export function CTASection() {
             viewport={{ once: true }}
             className="text-xl text-muted-foreground mb-8 max-w-2xl mx-auto"
           >
-            Join hundreds of developers who've already transformed their CSV data 
+            Join hundreds of developers who&apos;ve already transformed their CSV data 
             into production-ready Supabase schemas. No credit card required.
           </motion.p>
 
