@@ -14,7 +14,7 @@ import { Vortex } from "@/components/ui/vortex";
 
 export function Hero() {
   return (
-    <section className="relative min-h-screen flex items-center justify-center overflow-hidden bg-black">
+    <section className="relative min-h-[900px] flex items-center justify-center overflow-hidden bg-black">
       {/* Vortex Background */}
       <Vortex
         backgroundColor="black"
