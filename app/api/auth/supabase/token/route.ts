@@ -49,6 +49,27 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await response.json();
+    
+    // Fetch user information using the access token
+    try {
+      const userResponse = await fetch('https://api.supabase.com/v1/profile', {
+        headers: {
+          'Authorization': `Bearer ${data.access_token}`,
+          'Accept': 'application/json',
+        },
+      });
+
+      if (userResponse.ok) {
+        const userData = await userResponse.json();
+        data.user_id = userData.id;
+        data.email = userData.email;
+        data.username = userData.username;
+      }
+    } catch (userError) {
+      console.warn('Failed to fetch user data:', userError);
+      // Continue without user data
+    }
+    
     return NextResponse.json(data);
 
   } catch (error) {

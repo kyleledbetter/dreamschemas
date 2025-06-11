@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-export async function GET(request: NextRequest) {
+interface RouteParams {
+  params: Promise<{
+    id: string;
+  }>;
+}
+
+export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
+    const { id } = await params;
     // Get the access token from the Authorization header
     const authHeader = request.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
@@ -14,7 +21,7 @@ export async function GET(request: NextRequest) {
     const accessToken = authHeader.split(' ')[1];
 
     // Forward the request to Supabase Management API
-    const response = await fetch('https://api.supabase.com/v1/projects', {
+    const response = await fetch(`https://api.supabase.com/v1/projects/${id}`, {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
         'Accept': 'application/json',
@@ -23,9 +30,9 @@ export async function GET(request: NextRequest) {
 
     if (!response.ok) {
       const error = await response.text();
-      console.error('Failed to fetch projects:', error);
+      console.error('Failed to fetch project:', error);
       return NextResponse.json(
-        { error: 'Failed to fetch projects' },
+        { error: 'Failed to fetch project' },
         { status: response.status }
       );
     }
@@ -34,7 +41,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(data);
 
   } catch (error) {
-    console.error('Projects fetch error:', error);
+    console.error('Project fetch error:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
@@ -42,8 +49,9 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function POST(request: NextRequest) {
+export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
+    const { id } = await params;
     // Get the access token from the Authorization header
     const authHeader = request.headers.get('Authorization');
     if (!authHeader?.startsWith('Bearer ')) {
@@ -55,34 +63,28 @@ export async function POST(request: NextRequest) {
 
     const accessToken = authHeader.split(' ')[1];
 
-    // Get the request body
-    const body = await request.json();
-
     // Forward the request to Supabase Management API
-    const response = await fetch('https://api.supabase.com/v1/projects', {
-      method: 'POST',
+    const response = await fetch(`https://api.supabase.com/v1/projects/${id}`, {
+      method: 'DELETE',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
         'Accept': 'application/json',
       },
-      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
       const error = await response.text();
-      console.error('Failed to create project:', error);
+      console.error('Failed to delete project:', error);
       return NextResponse.json(
-        { error: 'Failed to create project' },
+        { error: 'Failed to delete project' },
         { status: response.status }
       );
     }
 
-    const data = await response.json();
-    return NextResponse.json(data);
+    return NextResponse.json({ success: true });
 
   } catch (error) {
-    console.error('Project creation error:', error);
+    console.error('Project delete error:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

@@ -23,6 +23,17 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import Prism from "prismjs";
 import "prismjs/components/prism-sql";
 import { getSupabaseOAuth } from "@/lib/supabase/oauth";
@@ -340,23 +351,80 @@ export function MigrationDeployer({
                 {showPreview ? "Hide" : "Preview"} Migration
               </Button>
 
-              <Button
-                onClick={deploySchema}
-                disabled={isDeploying || !oauth.getState().isConnected}
-                className="gap-2"
-              >
-                {isDeploying ? (
-                  <>
-                    <RefreshCw className="h-4 w-4 animate-spin" />
-                    Deploying...
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-4 w-4" />
-                    Deploy Schema
-                  </>
-                )}
-              </Button>
+              {deploymentOptions.includeDropStatements ? (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      disabled={isDeploying || !oauth.getState().isConnected}
+                      className="gap-2"
+                    >
+                      {isDeploying ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                          Deploying...
+                        </>
+                      ) : (
+                        <>
+                          <Play className="h-4 w-4" />
+                          Deploy Schema
+                        </>
+                      )}
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+                        <AlertTriangle className="h-5 w-5" />
+                        Destructive Action Warning
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        You are about to deploy with{" "}
+                        <strong>Drop Tables</strong> enabled. This will:
+                        <br />
+                        <br />• <strong>Delete all existing tables</strong> and
+                        their data
+                        <br />• <strong>
+                          Permanently destroy all records
+                        </strong>{" "}
+                        in those tables
+                        <br />
+                        • Create new tables from scratch
+                        <br />
+                        <br />
+                        <strong>This action cannot be undone!</strong> Are you
+                        absolutely sure you want to continue?
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={deploySchema}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      >
+                        Yes, Delete & Deploy
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              ) : (
+                <Button
+                  onClick={deploySchema}
+                  disabled={isDeploying || !oauth.getState().isConnected}
+                  className="gap-2"
+                >
+                  {isDeploying ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      Deploying...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="h-4 w-4" />
+                      Deploy Schema
+                    </>
+                  )}
+                </Button>
+              )}
             </div>
           </div>
         </CardHeader>
@@ -371,8 +439,12 @@ export function MigrationDeployer({
                   { key: "includeRLS", label: "RLS Policies" },
                   { key: "includeIndexes", label: "Indexes" },
                   { key: "includeComments", label: "Comments" },
-                  { key: "includeDropStatements", label: "Drop Tables" },
-                ].map(({ key, label }) => (
+                  {
+                    key: "includeDropStatements",
+                    label: "Drop Tables",
+                    dangerous: true,
+                  },
+                ].map(({ key, label, dangerous }) => (
                   <label key={key} className="flex items-center gap-2 text-sm">
                     <input
                       type="checkbox"
@@ -390,10 +462,24 @@ export function MigrationDeployer({
                       disabled={isDeploying}
                       className="rounded"
                     />
-                    {label}
+                    <span className={dangerous ? "text-red-600" : ""}>
+                      {label}
+                    </span>
                   </label>
                 ))}
               </div>
+
+              {/* Warning for Drop Tables */}
+              {deploymentOptions.includeDropStatements && (
+                <Alert className="mt-2 border-destructive/50 text-error dark:border-destructive">
+                  <AlertTriangle className="size-4 !text-error" />
+                  <AlertDescription>
+                    <strong>Warning:</strong> Drop Tables is enabled. This will
+                    delete all existing tables and data before creating new
+                    ones. This action cannot be undone!!!
+                  </AlertDescription>
+                </Alert>
+              )}
             </div>
 
             {/* Migration Summary */}

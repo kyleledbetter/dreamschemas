@@ -125,6 +125,8 @@ export class SupabaseOAuth {
    * Handle OAuth callback with workflow state restoration
    */
   async handleCallback(code: string, state: string): Promise<{ workflowState?: WorkflowState | null }> {
+    console.log('OAuth handleCallback called with:', { code: code.substring(0, 10) + '...', state });
+    
     const storedState = sessionStorage.getItem('oauth_state');
     const codeVerifier = sessionStorage.getItem('code_verifier');
 
@@ -139,12 +141,40 @@ export class SupabaseOAuth {
       throw new Error('OAuth state mismatch');
     }
 
+    console.log('Exchanging code for tokens...');
     // Exchange code for tokens
-    await this.exchangeCodeForTokens(code, codeVerifier);
+    const connection = await this.exchangeCodeForTokens(code, codeVerifier);
+    console.log('Token exchange successful, connection:', { 
+      hasAccessToken: !!connection.accessToken, 
+      user: connection.user 
+    });
+    
+    // Store the connection
+    this.connection = connection;
+    this.saveToStorage();
+    console.log('Connection saved to localStorage');
+    
+    // Update the OAuth state
+    this.updateState({
+      isConnected: true,
+      accessToken: connection.accessToken,
+      user: connection.user,
+      isLoading: false,
+    });
+    console.log('OAuth state updated');
+    
+    // Clear any previous errors
+    if (this.currentState.error) {
+      delete this.currentState.error;
+      this.notifyListeners();
+    }
 
     // Clear PKCE parameters
     sessionStorage.removeItem('oauth_state');
     sessionStorage.removeItem('code_verifier');
+
+    // Load user data in background
+    this.loadUserData().catch(console.error);
 
     // Restore workflow state if present
     let workflowState: WorkflowState | null = null;
@@ -156,6 +186,7 @@ export class SupabaseOAuth {
       }
     }
 
+    console.log('OAuth callback complete, returning workflow state:', workflowState);
     return { workflowState };
   }
 

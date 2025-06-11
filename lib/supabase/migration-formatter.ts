@@ -148,6 +148,11 @@ export class MigrationFormatter {
       parts.push(this.generateIndexes());
     }
 
+    // Include RLS in main migration to ensure it's executed together
+    if (this.options.includeRLS && this.schema.rlsPolicies.length > 0) {
+      parts.push(this.generateRLSMigration());
+    }
+
     return parts.filter(Boolean).join('\n\n');
   }
 

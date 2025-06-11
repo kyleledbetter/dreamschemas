@@ -22,8 +22,9 @@ import {
   Sparkles,
   Upload,
   Zap,
+  RefreshCw,
 } from "lucide-react";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useState, useEffect } from "react";
 
 // Import our feature components
 import { SchemaOptimizationPanel } from "@/components/ai/schema-optimization-panel";
@@ -41,6 +42,7 @@ import type {
   DeploymentResult,
   SupabaseProject,
 } from "@/lib/supabase/management";
+import { getSupabaseOAuth, type OAuthState } from "@/lib/supabase/oauth";
 import { generateId } from "@/lib/utils";
 import type { WorkflowState as OAuthWorkflowState } from "@/lib/workflow/state-manager";
 import type {
@@ -251,6 +253,20 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
   });
 
   const [showWelcome, setShowWelcome] = useState(true);
+
+  // Add OAuth state management
+  const [oauthState, setOauthState] = useState<OAuthState>({
+    isConnected: false,
+    isLoading: false,
+  });
+
+  useEffect(() => {
+    const oauth = getSupabaseOAuth();
+    const unsubscribe = oauth.subscribe(setOauthState);
+    return unsubscribe;
+  }, []);
+
+  const oauth = getSupabaseOAuth();
 
   // Calculate overall progress
   const overallProgress =
@@ -697,6 +713,15 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
     [updateState]
   );
 
+  // Handle OAuth connection
+  const handleConnect = async () => {
+    try {
+      await oauth.startOAuth(getOAuthWorkflowState());
+    } catch (error) {
+      console.error("Failed to start OAuth:", error);
+    }
+  };
+
   // Restart workflow
   const restartWorkflow = useCallback(() => {
     setState({
@@ -754,6 +779,23 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
             </p>
           </div>
 
+          {/* Supabase Connection Status */}
+          {oauthState.isConnected && (
+            <Card className="max-w-2xl mx-auto">
+              <CardContent className="py-4">
+                <div className="flex items-center justify-center gap-2 text-green-600">
+                  <CheckCircle2 className="h-5 w-5" />
+                  <span className="font-medium">Connected to Supabase</span>
+                  {oauthState.user?.email && (
+                    <span className="text-sm text-muted-foreground">
+                      ({oauthState.user.email})
+                    </span>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <Card className="max-w-2xl mx-auto">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -797,7 +839,7 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
             </CardContent>
           </Card>
 
-          <div className="flex justify-center gap-4">
+          <div className="flex justify-center gap-4 flex-wrap">
             <Button
               onClick={() => setShowWelcome(false)}
               size="lg"
@@ -806,6 +848,34 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
               <Play className="h-4 w-4" />
               Start Building Schema
             </Button>
+
+            {!oauthState.isConnected ? (
+              <Button
+                onClick={handleConnect}
+                disabled={oauthState.isLoading}
+                variant="outline"
+                size="lg"
+                className="gap-2"
+              >
+                {oauthState.isLoading ? (
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                ) : (
+                  <SupabaseLogoMark />
+                )}
+                Connect Supabase
+              </Button>
+            ) : (
+              <Button
+                onClick={() => oauth.disconnect()}
+                variant="outline"
+                size="lg"
+                className="gap-2 text-red-600 hover:text-red-700"
+              >
+                <SupabaseLogoMark />
+                Disconnect Supabase
+              </Button>
+            )}
+
             <Button variant="outline" size="lg" className="gap-2">
               <FileText className="h-4 w-4" />
               View Examples
@@ -819,6 +889,13 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
               to external servers during analysis.
             </AlertDescription>
           </Alert>
+
+          {oauthState.error && (
+            <Alert className="max-w-2xl mx-auto" variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{oauthState.error}</AlertDescription>
+            </Alert>
+          )}
         </div>
       </div>
     );
