@@ -17,6 +17,7 @@ import { cn, generateId } from "@/lib/utils";
 import type {
   Column,
   DatabaseSchema,
+  PostgresType,
   Relationship,
   Table,
 } from "@/types/schema.types";
@@ -26,6 +27,7 @@ import {
   Connection,
   Controls,
   Edge,
+  MarkerType,
   Node,
   Panel,
   ReactFlow,
@@ -40,7 +42,6 @@ import {
   CheckSquare,
   CircleSlash2Icon,
   Crosshair,
-  Database,
   Edit,
   FileText,
   Grid,
@@ -60,7 +61,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTheme } from "next-themes";
 
 // Custom node data types
-interface TableNodeData {
+interface TableNodeData extends Record<string, unknown> {
   table: Table;
   onEdit: (table: Table) => void;
   onDelete: (tableId: string) => void;
@@ -76,7 +77,7 @@ interface ColumnItemProps {
 // Column component for table nodes
 function ColumnItem({ column, isSelected, onClick }: ColumnItemProps) {
   const getColumnIcon = (type: string) => {
-    const typeIcons = {
+    const typeIcons: Record<string, typeof Type> = {
       UUID: Key,
       VARCHAR: Type,
       TEXT: FileText,
@@ -230,8 +231,8 @@ function TableNode({ data }: { data: TableNodeData }) {
 
 // Properties panel for editing tables and columns
 interface PropertiesPanelProps {
-  selectedTable?: Table;
-  selectedColumn?: Column;
+  selectedTable?: Table | undefined;
+  selectedColumn?: Column | undefined;
   onUpdateTable?: (table: Table) => void;
   onUpdateColumn?: (column: Column) => void;
   onClose?: () => void;
@@ -301,9 +302,16 @@ function PropertiesPanel({
               id="table-comment"
               value={editingTable.comment || ""}
               onChange={(e) =>
-                setEditingTable((prev) =>
-                  prev ? { ...prev, comment: e.target.value } : undefined
-                )
+                setEditingTable((prev) => {
+                  if (!prev) return undefined;
+                  const newTable = { ...prev };
+                  if (e.target.value.trim()) {
+                    newTable.comment = e.target.value;
+                  } else {
+                    delete newTable.comment;
+                  }
+                  return newTable;
+                })
               }
               placeholder="Optional table description"
             />
@@ -363,7 +371,7 @@ function PropertiesPanel({
               value={editingColumn.type}
               onValueChange={(value) =>
                 setEditingColumn((prev) =>
-                  prev ? { ...prev, type: value as any } : undefined
+                  prev ? { ...prev, type: value as PostgresType } : undefined
                 )
               }
             >
@@ -391,15 +399,13 @@ function PropertiesPanel({
               <Input
                 id="column-length"
                 type="number"
-                value={editingColumn.length || ""}
+                value={editingColumn.length?.toString() || ""}
                 onChange={(e) =>
                   setEditingColumn((prev) =>
                     prev
                       ? {
                           ...prev,
-                          length: e.target.value
-                            ? parseInt(e.target.value)
-                            : undefined,
+                          length: e.target.value ? parseInt(e.target.value) : 0,
                         }
                       : undefined
                   )
@@ -436,7 +442,7 @@ function PropertiesPanel({
                   prev
                     ? {
                         ...prev,
-                        defaultValue: e.target.value || undefined,
+                        defaultValue: e.target.value,
                       }
                     : undefined
                 )
@@ -455,7 +461,7 @@ function PropertiesPanel({
                   prev
                     ? {
                         ...prev,
-                        comment: e.target.value || undefined,
+                        comment: e.target.value,
                       }
                     : undefined
                 )
@@ -503,15 +509,17 @@ function VisualSchemaEditorComponent({
   className = "",
   readonly = false,
 }: VisualSchemaEditorProps) {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node<TableNodeData>>(
+    []
+  );
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedTable, setSelectedTable] = useState<Table | undefined>();
   const [selectedColumn, setSelectedColumn] = useState<Column | undefined>();
   const [showPropertiesPanel, setShowPropertiesPanel] = useState(false);
   const [isCreatingRelationship, setIsCreatingRelationship] = useState(false);
   const { theme } = useTheme();
 
-  const { fitView, setCenter, zoomIn, zoomOut } = useReactFlow();
+  const { fitView } = useReactFlow();
 
   // Node types for React Flow
   const nodeTypes = useMemo(
@@ -523,37 +531,40 @@ function VisualSchemaEditorComponent({
 
   // Convert schema to React Flow nodes
   useEffect(() => {
-    const newNodes: Node[] = schema.tables.map((table, index) => ({
-      id: table.id,
-      type: "table",
-      position: table.position || {
-        x: (index % 3) * 350 + 50,
-        y: Math.floor(index / 3) * 250 + 50,
-      },
-      data: {
-        table,
-        onEdit: (table: Table) => {
-          setSelectedTable(table);
-          setSelectedColumn(undefined);
-          setShowPropertiesPanel(true);
+    const newNodes: Node<TableNodeData>[] = schema.tables.map(
+      (table, index) => ({
+        id: table.id,
+        type: "table",
+        position: table.position || {
+          x: (index % 3) * 350 + 50,
+          y: Math.floor(index / 3) * 250 + 50,
         },
-        onDelete: (tableId: string) => {
-          if (!readonly) {
-            const updatedSchema = {
-              ...schema,
-              tables: schema.tables.filter((t) => t.id !== tableId),
-              relationships:
-                schema.relationships?.filter(
-                  (r) =>
-                    r.sourceTable !== table.name && r.targetTable !== table.name
-                ) || [],
-            };
-            onSchemaChange(updatedSchema);
-          }
-        },
-        isSelected: selectedTable?.id === table.id,
-      } as TableNodeData,
-    }));
+        data: {
+          table,
+          onEdit: (table: Table) => {
+            setSelectedTable(table);
+            setSelectedColumn(undefined);
+            setShowPropertiesPanel(true);
+          },
+          onDelete: (tableId: string) => {
+            if (!readonly) {
+              const updatedSchema = {
+                ...schema,
+                tables: schema.tables.filter((t) => t.id !== tableId),
+                relationships:
+                  schema.relationships?.filter(
+                    (r) =>
+                      r.sourceTable !== table.name &&
+                      r.targetTable !== table.name
+                  ) || [],
+              };
+              onSchemaChange(updatedSchema);
+            }
+          },
+          isSelected: selectedTable?.id === table.id,
+        } as TableNodeData,
+      })
+    );
 
     setNodes(newNodes);
   }, [schema.tables, selectedTable, readonly, onSchemaChange]);
@@ -582,7 +593,7 @@ function VisualSchemaEditorComponent({
           strokeWidth: 2,
         },
         markerEnd: {
-          type: "arrowclosed",
+          type: MarkerType.ArrowClosed,
           color: "#6b7280",
         },
         data: { relationship },
@@ -625,7 +636,7 @@ function VisualSchemaEditorComponent({
 
   // Handle node position changes
   const onNodeDragStop = useCallback(
-    (_: any, node: Node) => {
+    (_: React.MouseEvent | React.TouchEvent, node: Node) => {
       if (readonly) return;
 
       const updatedTables = schema.tables.map((table) =>

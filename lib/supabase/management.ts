@@ -98,13 +98,19 @@ export interface TokenValidation {
  */
 export class SupabaseManagementClient {
   private accessToken: string;
+  private static readonly SUPABASE_API_BASE = 'https://api.supabase.com/v1';
 
   constructor(accessToken: string) {
     this.accessToken = accessToken;
   }
 
   private async fetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const response = await fetch(endpoint, {
+    // Determine if this is a local API call or a direct Supabase API call
+    const url = endpoint.startsWith('/api/') 
+      ? endpoint // Local API routes (relative)
+      : `${SupabaseManagementClient.SUPABASE_API_BASE}${endpoint}`; // Direct Supabase API calls (absolute)
+
+    const response = await fetch(url, {
       ...options,
       headers: {
         ...options.headers,
