@@ -54,7 +54,7 @@ const ThemeSwitcher = () => {
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-content" align="start">
         <DropdownMenuRadioGroup
-          value={theme}
+          value={theme || "system"}
           onValueChange={(e) => setTheme(e)}
         >
           <DropdownMenuRadioItem className="flex gap-2" value="light">

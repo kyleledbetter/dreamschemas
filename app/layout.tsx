@@ -10,7 +10,8 @@ const defaultUrl = process.env.VERCEL_URL
 export const metadata: Metadata = {
   metadataBase: new URL(defaultUrl),
   title: "Dreamschema - CSV to Supabase Schema Converter",
-  description: "Convert CSV files into production-ready Postgres database schemas for Supabase with AI-powered schema generation and visual editing.",
+  description:
+    "Convert CSV files into production-ready Postgres database schemas for Supabase with AI-powered schema generation and visual editing.",
 };
 
 const geistSans = Geist({
@@ -26,7 +27,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en\" suppressHydrationWarning>
-      <body className={`${geistSans.className} antialiased`}>
+      <body className={`${geistSans.className} antialiased size-full`}>
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
