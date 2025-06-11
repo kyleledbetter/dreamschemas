@@ -1,20 +1,17 @@
-import { EnvVarWarning } from "@/components/env-var-warning";
 import { AuthButton } from "@/components/auth-button";
+import { EnvVarWarning } from "@/components/env-var-warning";
 import { ThemeSwitcher } from "@/components/theme-switcher";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { hasEnvVars } from "@/lib/utils";
-import Link from "next/link";
 import {
   Database,
-  Sparkles,
-  Settings,
-  HelpCircle,
-  BookOpen,
   Github,
-  Twitter,
   MessageCircle,
+  Sparkles,
+  Twitter,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import Link from "next/link";
 
 export default function DashboardLayout({
   children,
@@ -48,62 +45,27 @@ export default function DashboardLayout({
                   Schema Builder
                 </Link>
               </Button>
-              <Button variant="ghost" size="sm" asChild>
-                <Link href="/dashboard/projects" className="gap-2">
-                  <Database className="h-4 w-4" />
-                  My Projects
-                </Link>
-              </Button>
-              <Button variant="ghost" size="sm" asChild>
-                <Link href="/dashboard/templates" className="gap-2">
-                  <BookOpen className="h-4 w-4" />
-                  Templates
-                </Link>
-              </Button>
             </nav>
           </div>
 
           {/* Actions */}
           <div className="flex items-center gap-3">
-            {/* Help Menu */}
-            <div className="hidden sm:flex items-center gap-2">
-              <Button variant="ghost" size="sm" asChild>
-                <Link href="/docs" className="gap-2">
-                  <HelpCircle className="h-4 w-4" />
-                  Help
-                </Link>
-              </Button>
-              <Button variant="ghost" size="sm" asChild>
-                <Link href="/feedback" className="gap-2">
-                  <MessageCircle className="h-4 w-4" />
-                  Feedback
-                </Link>
-              </Button>
-            </div>
+            {/* Auth Button */}
+            {!hasEnvVars ? <EnvVarWarning /> : <AuthButton />}
 
             {/* Theme Switcher */}
             <ThemeSwitcher />
-
-            {/* Settings */}
-            <Button variant="ghost" size="sm" asChild>
-              <Link href="/dashboard/settings">
-                <Settings className="h-4 w-4" />
-              </Link>
-            </Button>
-
-            {/* Auth Button */}
-            {!hasEnvVars ? <EnvVarWarning /> : <AuthButton />}
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 size-full">{children}</main>
+      <main className="flex-1 size-full flex flex-col">{children}</main>
 
       {/* Footer */}
       <footer className="border-t bg-muted/50">
         <div className="max-w-7xl mx-auto px-6 py-8">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 hidden">
             {/* Brand */}
             <div className="space-y-3">
               <div className="flex items-center gap-2 font-bold">
@@ -211,9 +173,9 @@ export default function DashboardLayout({
             </div>
           </div>
 
-          <div className="border-t mt-8 pt-8 flex flex-col sm:flex-row justify-between items-center gap-4">
+          <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
             <p className="text-xs text-muted-foreground">
-              © 2024 Dreamschema. All rights reserved.
+              © 2025 Dream, Inc. All rights reserved.
             </p>
             <div className="flex items-center gap-4 text-xs text-muted-foreground">
               <Link href="/privacy" className="hover:text-foreground">

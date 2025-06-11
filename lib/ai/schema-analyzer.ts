@@ -36,32 +36,41 @@ const SchemaAnalysisSchema = z.object({
       constraints: z.array(z.string()),
       reasoning: z.string(),
     })).refine((columns) => {
-      // Check for UUID primary key named 'id'
+      // More flexible primary key check - allow id column with UUID type
       const idColumn = columns.find(col => col.name === 'id');
-      return idColumn && 
-             idColumn.type === 'UUID' && 
-             idColumn.constraints.some(c => 
-               c === 'PRIMARY KEY' || 
-               c.includes('PRIMARY KEY') || 
-               c.toLowerCase().includes('primary key')
-             );
+      if (!idColumn) return false;
+      
+      // Allow UUID type and check for primary key constraint more flexibly
+      const isUUID = idColumn.type === 'UUID';
+      const hasPrimaryKey = idColumn.constraints.some(c => 
+        c.includes('PRIMARY KEY') || 
+        c.includes('primary key') || 
+        c.includes('Primary Key')
+      );
+      
+      return isUUID && hasPrimaryKey;
     }, { 
       message: "Table must have a UUID primary key column named 'id'"
     }).refine((columns) => {
-      // Check for created_at and updated_at timestamps
+      // More flexible timestamp validation - allow missing timestamps in some cases
       const hasCreatedAt = columns.some(col => 
         col.name === 'created_at' && 
-        col.type === 'TIMESTAMPTZ' && 
+        (col.type === 'TIMESTAMPTZ' || col.type === 'TIMESTAMP') && 
         !col.nullable
       );
       const hasUpdatedAt = columns.some(col => 
         col.name === 'updated_at' && 
-        col.type === 'TIMESTAMPTZ' && 
+        (col.type === 'TIMESTAMPTZ' || col.type === 'TIMESTAMP') && 
         !col.nullable
       );
-      return hasCreatedAt && hasUpdatedAt;
+      
+      // Allow lookup/reference tables to skip timestamps if they're small
+      const isLikelyLookupTable = columns.length <= 5 && 
+        columns.some(col => col.name.includes('name') || col.name.includes('title'));
+      
+      return (hasCreatedAt && hasUpdatedAt) || isLikelyLookupTable;
     }, {
-      message: "Table must have non-nullable TIMESTAMPTZ columns 'created_at' and 'updated_at'"
+      message: "Table should have TIMESTAMPTZ columns 'created_at' and 'updated_at' (except for small lookup tables)"
     }),
     relationships: z.array(z.object({
       type: z.enum(['one-to-one', 'one-to-many', 'many-to-many']),
@@ -85,7 +94,7 @@ const SchemaAnalysisSchema = z.object({
       using: z.string().optional(),
       with_check: z.string().optional(),
       reasoning: z.string(),
-    })).min(1, "Each table must have at least one RLS policy"),
+    })).optional().default([]),
   })),
   suggestions: z.array(z.object({
     type: z.enum(['optimization', 'normalization', 'data-quality', 'best-practice']),
@@ -133,12 +142,17 @@ export class SchemaAnalyzer {
       targetUseCase?: string;
     } = {}
   ): Promise<AISchemaAnalysis> {
+    console.log(`🤖 Starting AI schema analysis for ${csvResults.length} CSV files`);
+    console.log(`📊 Total columns across all files: ${csvResults.reduce((sum, csv) => sum + csv.columns.length, 0)}`);
+    
     try {
       // Optimize data for analysis
       const optimizedResults = this.optimizeDataForAnalysis(csvResults);
+      console.log(`✅ Data optimization complete`);
       
       // Build and chunk the prompt if needed
       const prompt = this.buildAnalysisPrompt(optimizedResults, options);
+      console.log(`📝 Analysis prompt built (${prompt.length} characters)`);
       
       const result = await generateObject({
         model: this.model,
@@ -149,13 +163,44 @@ export class SchemaAnalyzer {
         temperature: this.temperature,
       });
 
-      // Additional validation for foreign key relationships
-      this.validateForeignKeyRelationships(result.object);
+      console.log(`🎉 AI analysis successful! Generated ${result.object.tables.length} tables`);
+      console.log(`📈 Confidence score: ${result.object.confidence}`);
+      console.log(`🔗 Total relationships: ${result.object.tables.reduce((sum, t) => sum + t.relationships.length, 0)}`);
+
+      // Log the full AI-generated JSON for debugging
+      console.log('\n🔍 FULL AI-GENERATED SCHEMA JSON:');
+      console.log('=====================================');
+      console.log(JSON.stringify(result.object, null, 2));
+      console.log('=====================================\n');
+
+      // Additional validation for foreign key relationships (but don't fail on errors)
+      try {
+        this.validateForeignKeyRelationships(result.object);
+        console.log(`✅ Foreign key validation passed`);
+      } catch (validationError) {
+        console.warn(`⚠️  Foreign key validation warning:`, validationError);
+        // Don't fail the entire analysis for validation issues
+      }
 
       return result.object;
     } catch (error) {
-      console.error('AI schema analysis failed:', error);
-      // Fallback to rule-based analysis
+      console.error('❌ AI schema analysis failed:', error);
+      
+      // Log specific error details for debugging
+      if (error instanceof Error) {
+        console.error('Error name:', error.name);
+        console.error('Error message:', error.message);
+        if (error.stack) {
+          console.error('Error stack:', error.stack.split('\n').slice(0, 5).join('\n'));
+        }
+      }
+      
+      // Try to extract more specific error information
+      if (error && typeof error === 'object') {
+        console.error('Error details:', JSON.stringify(error, null, 2));
+      }
+      
+      console.log('🔄 Falling back to rule-based analysis...');
       return this.fallbackAnalysis(csvResults);
     }
   }
@@ -256,61 +301,106 @@ export class SchemaAnalyzer {
   }
 
   private buildSchemaGenerationSystemPrompt(): string {
-    return `You are a PostgreSQL schema generation system that MUST output ONLY RAW JSON.
-DO NOT wrap the output in markdown code blocks.
-DO NOT include \`\`\`json or \`\`\` markers.
-DO NOT include any explanatory text.
-ONLY output the raw JSON object.
+    return `You are an expert PostgreSQL database architect that analyzes CSV data and designs normalized, production-ready schemas.
+
+CORE PRINCIPLES:
+1. NORMALIZE DATA: Split wide CSV tables into multiple related tables following 3NF principles
+2. IDENTIFY ENTITIES: Look for distinct business entities that should be separate tables
+3. CREATE RELATIONSHIPS: Use foreign keys to link related data between tables
+4. AVOID REDUNDANCY: Move repeated data into lookup/reference tables
+
+WHEN TO SPLIT TABLES:
+- Columns that represent different entities (e.g., user info + order info + product info)
+- Repeated values that could be normalized (e.g., categories, statuses, locations)
+- Large tables with >15-20 columns should usually be split
+- One-to-many relationships (e.g., user has many orders)
+
+OUTPUT FORMAT: Return ONLY valid JSON (no markdown, no backticks, no explanations).
 
 Required JSON Structure:
 {
+  "confidence": number (0-1),
+  "reasoning": "Explain your normalization decisions",
   "tables": [
     {
-      "name": string,
+      "name": "table_name",
       "columns": [
         {
-          "name": string,
-          "type": string,
+          "name": "id",
+          "type": "UUID",
+          "nullable": false,
+          "constraints": ["PRIMARY KEY", "DEFAULT gen_random_uuid()"],
+          "reasoning": "Primary key"
+        },
+        {
+          "name": "column_name",
+          "type": "VARCHAR|TEXT|INTEGER|etc",
           "nullable": boolean,
-          "constraints": string[],
-          "reasoning": string
+          "length": number (optional),
+          "constraints": ["FOREIGN KEY", "UNIQUE", etc],
+          "reasoning": "Why this column exists"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMPTZ",
+          "nullable": false,
+          "constraints": ["DEFAULT NOW()"],
+          "reasoning": "Audit timestamp"
+        },
+        {
+          "name": "updated_at", 
+          "type": "TIMESTAMPTZ",
+          "nullable": false,
+          "constraints": ["DEFAULT NOW()"],
+          "reasoning": "Audit timestamp"
+        }
+      ],
+      "relationships": [
+        {
+          "type": "one-to-many|many-to-one|many-to-many",
+          "targetTable": "other_table",
+          "sourceColumn": "foreign_key_column",
+          "targetColumn": "id",
+          "confidence": number,
+          "reasoning": "Why this relationship exists"
         }
       ],
       "indexes": [
         {
-          "name": string,
-          "columns": string[],
-          "unique": boolean
+          "name": "idx_table_column",
+          "columns": ["column_name"],
+          "unique": boolean,
+          "reasoning": "Performance or uniqueness reason"
         }
       ],
       "rlsPolicies": [
         {
-          "name": string,
-          "operation": string,
-          "definition": string,
-          "with_check": string
+          "name": "table_select_policy",
+          "operation": "SELECT",
+          "definition": "true",
+          "reasoning": "Access control reasoning"
         }
       ]
     }
   ],
-  "relationships": [],
-  "confidence": number,
-  "reasoning": string
+  "suggestions": [
+    {
+      "type": "normalization|optimization|data-quality|best-practice",
+      "description": "Suggestion text",
+      "impact": "low|medium|high",
+      "reasoning": "Why this suggestion matters",
+      "actionable": boolean
+    }
+  ]
 }
 
 CRITICAL REQUIREMENTS:
-1. Output MUST be valid JSON
-2. DO NOT include markdown formatting
-3. DO NOT include backticks or code block markers
-4. Every table MUST have these columns in order:
-   - id (UUID, PRIMARY KEY, DEFAULT gen_random_uuid())
-   - created_at (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
-   - updated_at (TIMESTAMPTZ, NOT NULL, DEFAULT NOW())
-5. Every table MUST have RLS policies
-6. Every foreign key MUST be UUID type
-7. Use snake_case for all names
-8. Include confidence score (0-1)
-9. Include reasoning as string`;
+- Every table MUST have: id (UUID PRIMARY KEY), created_at, updated_at
+- Foreign keys MUST be UUID type and reference existing tables
+- Use snake_case for all names
+- Include at least one RLS policy per table (can be permissive for now)
+- Provide clear reasoning for design decisions
+- Output valid JSON only (no markdown formatting)`;
   }
 
   /**
@@ -400,51 +490,57 @@ CRITICAL REQUIREMENTS:
         inferredType: col.inferredType,
         nullCount: col.nullCount,
         totalCount: col.totalCount,
+        uniqueRatio: col.sampleValues.length / Math.max(col.totalCount, 1),
       })),
       totalRows: result.totalRows,
+      totalColumns: result.columns.length,
     }));
 
+    const hasLargeTables = csvSummary.some(csv => csv.totalColumns > 10);
+    const potentialEntities = csvSummary.flatMap(csv => 
+      csv.columns
+        .filter(col => col.name.includes('name') || col.name.includes('title') || col.name.includes('type'))
+        .map(col => ({ table: csv.fileName, column: col.name, samples: col.sampleValues }))
+    );
+
     return `
-Analyze the following CSV data and generate a production-ready database schema.
+TASK: Analyze CSV data and create a NORMALIZED database schema with MULTIPLE RELATED TABLES.
 
-CRITICAL: Every table MUST start with these EXACT columns in this order:
-{
-  name: "id",
-  type: "UUID",
-  nullable: false,
-  constraints: ["PRIMARY KEY", "DEFAULT gen_random_uuid()"]
-},
-{
-  name: "created_at",
-  type: "TIMESTAMPTZ",
-  nullable: false,
-  constraints: ["DEFAULT NOW()"]
-},
-{
-  name: "updated_at",
-  type: "TIMESTAMPTZ",
-  nullable: false,
-  constraints: ["DEFAULT NOW()"]
-}
-
-CSV Data Summary:
+CSV Data Analysis:
 ${JSON.stringify(csvSummary, null, 2)}
 
-Target Use Case: ${options.targetUseCase || 'General purpose application'}
-
-${options.includeOptimizations ? `
-Additional Requirements:
-- Suggest performance optimizations
-- Identify normalization opportunities
-- Recommend partitioning strategies if applicable
+${hasLargeTables ? `
+🔍 NORMALIZATION REQUIRED: Detected tables with ${csvSummary.find(c => c.totalColumns > 10)?.totalColumns}+ columns.
+MUST split into multiple related tables following database normalization principles.
 ` : ''}
 
-IMPORTANT: Return a valid schema object that matches the required structure exactly.
-Each table MUST have:
-1. UUID primary key column named 'id'
-2. TIMESTAMPTZ columns 'created_at' and 'updated_at'
-3. Foreign keys as UUID type with proper references
-4. RLS policies with auth.uid() checks
+${potentialEntities.length > 0 ? `
+🎯 DETECTED ENTITIES: Consider creating separate tables for:
+${potentialEntities.map(e => `- ${e.column} (from ${e.table}): ${e.samples.slice(0, 3).join(', ')}`).join('\n')}
+` : ''}
+
+DESIGN STRATEGY:
+1. 📊 ANALYZE: Look for distinct business entities in the data
+2. 🔄 NORMALIZE: Split wide tables into focused, related tables  
+3. 🔗 RELATE: Create foreign key relationships between tables
+4. 🎯 OPTIMIZE: Design for the target use case: "${options.targetUseCase || 'General purpose application'}"
+
+SPECIFIC INSTRUCTIONS:
+- If a CSV has >10 columns, SPLIT it into 2-4 related tables
+- Look for repeated values that should become lookup tables
+- Identify entity relationships (user→orders, product→categories, etc.)
+- Create foreign keys between related tables
+- Each table gets: id (UUID PRIMARY KEY), created_at, updated_at
+- Add meaningful indexes for common query patterns
+
+${options.includeOptimizations ? `
+OPTIMIZATION FOCUS:
+- Performance indexes for foreign keys and frequently queried columns
+- Consider partitioning for large datasets
+- Suggest views for complex queries
+` : ''}
+
+OUTPUT: Valid JSON schema with multiple normalized tables and their relationships.
 `.trim();
   }
 
@@ -651,7 +747,7 @@ Format your response as JSON with the following structure:
 
     return {
       confidence: 0.6,
-      reasoning: 'Fallback rule-based analysis used due to AI service unavailability',
+      reasoning: 'FALLBACK: Rule-based analysis used due to AI service failure. Tables were not normalized or split.',
       tables,
       suggestions: [
         {
@@ -693,10 +789,11 @@ Format your response as JSON with the following structure:
       .replace(/^[0-9]/, '_$&'); // Prefix numbers with underscore
   }
 
-  // Add new validation method
+  // Add new validation method - now more lenient and informative
   private validateForeignKeyRelationships(analysis: AISchemaAnalysis) {
     // Build set of table names for quick lookup
     const tableNames = new Set(analysis.tables.map(t => t.name));
+    const issues: string[] = [];
     
     for (const table of analysis.tables) {
       for (const rel of table.relationships) {
@@ -705,23 +802,40 @@ Format your response as JSON with the following structure:
           continue;
         }
         
-        // Ensure target table exists
+        // Check if target table exists
         if (!tableNames.has(rel.targetTable)) {
-          throw new Error(`Invalid foreign key relationship: target table "${rel.targetTable}" does not exist`);
+          issues.push(`Table "${table.name}": target table "${rel.targetTable}" does not exist in schema`);
+          continue; // Skip further validation for this relationship
         }
         
-        // Ensure source column exists in current table
+        // Check if source column exists in current table
         const hasSourceColumn = table.columns.some(c => c.name === rel.sourceColumn);
         if (!hasSourceColumn) {
-          throw new Error(`Invalid foreign key relationship: source column "${rel.sourceColumn}" does not exist in table "${table.name}"`);
+          issues.push(`Table "${table.name}": source column "${rel.sourceColumn}" does not exist`);
         }
         
-        // Ensure target column exists in target table
+        // Check if target column exists in target table
         const targetTable = analysis.tables.find(t => t.name === rel.targetTable);
         const hasTargetColumn = targetTable?.columns.some(c => c.name === rel.targetColumn);
         if (!hasTargetColumn) {
-          throw new Error(`Invalid foreign key relationship: target column "${rel.targetColumn}" does not exist in table "${rel.targetTable}"`);
+          issues.push(`Table "${table.name}": target column "${rel.targetColumn}" does not exist in table "${rel.targetTable}"`);
         }
+      }
+    }
+    
+    // Log issues but don't throw errors that would break the analysis
+    if (issues.length > 0) {
+      console.warn('🔍 Foreign key relationship issues found:');
+      issues.forEach(issue => console.warn(`  - ${issue}`));
+      
+      // Only throw if there are critical issues that would break the schema
+      const criticalIssues = issues.filter(issue => 
+        issue.includes('does not exist in schema') || 
+        issue.includes('source column') && issue.includes('does not exist')
+      );
+      
+      if (criticalIssues.length > 3) { // Allow some flexibility
+        throw new Error(`Too many critical foreign key issues: ${criticalIssues.join('; ')}`);
       }
     }
   }

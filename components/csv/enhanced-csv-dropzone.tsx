@@ -346,7 +346,7 @@ export function EnhancedCSVDropzone({
             isDragActive && !isDragReject && "border-primary bg-primary/5",
             isDragReject && "border-red-500 bg-red-50",
             disabled && "cursor-not-allowed opacity-50",
-            files.length === 0 && "border-gray-300"
+            files.length === 0 && "border-muted"
           )}
         >
           <input {...getInputProps()} />
@@ -427,7 +427,7 @@ export function EnhancedCSVDropzone({
                             Export Cleaned
                           </Button>
                         )}
-                        <Badge className="bg-green-100 text-green-800">
+                        <Badge className="bg-accent/10 text-accent border border-accent">
                           <CheckCircle2 className="h-3 w-3 mr-1" />
                           Validated
                         </Badge>

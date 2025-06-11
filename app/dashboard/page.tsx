@@ -13,7 +13,7 @@ export default async function DashboardPage() {
   }
 
   return (
-    <div className="flex-1 size-full">
+    <div className="flex-1 size-full flex flex-col">
       <Suspense
         fallback={
           <div className="flex-1 w-full flex items-center justify-center">

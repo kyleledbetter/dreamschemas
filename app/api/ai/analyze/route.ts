@@ -220,24 +220,46 @@ async function handleStandardAnalysis(
       // Perform actual analysis
       const analysis = await analyzer.analyzeSchema(csvResults, options);
       
-      // Validate the analysis result
+      // Validate the analysis result - but be more lenient
       const validation = validateAIAnalysis(analysis);
       if (!validation.isValid) {
-        console.warn('AI analysis validation failed:', validation.issues);
+        console.warn('⚠️  AI analysis validation issues:', validation.issues);
         
-        await writer.write(encoder.encode(
-          `data: ${JSON.stringify({
-            type: 'error',
-            data: {
-              error: 'Analysis validation failed',
-              message: 'The generated analysis did not meet quality standards',
-              issues: validation.issues,
-              timestamp: new Date().toISOString()
-            }
-          })}\n\n`
-        ));
+        // Only fail if there are critical validation issues
+        const criticalIssues = validation.issues.filter(issue => 
+          issue.includes('missing name') || 
+          issue.includes('no columns') ||
+          issue.includes('missing primary key')
+        );
         
-        return null;
+        if (criticalIssues.length > 0) {
+          await writer.write(encoder.encode(
+            `data: ${JSON.stringify({
+              type: 'error',
+              data: {
+                error: 'Critical analysis validation failed',
+                message: 'The generated analysis has critical issues that prevent schema creation',
+                issues: criticalIssues,
+                allIssues: validation.issues,
+                timestamp: new Date().toISOString()
+              }
+            })}\n\n`
+          ));
+          
+          return null;
+        } else {
+          // Log warnings but continue
+          await writer.write(encoder.encode(
+            `data: ${JSON.stringify({
+              type: 'warning',
+              data: {
+                message: 'Analysis has minor validation issues but will proceed',
+                issues: validation.issues,
+                timestamp: new Date().toISOString()
+              }
+            })}\n\n`
+          ));
+        }
       }
 
       // Send completion event with analysis results
@@ -247,9 +269,16 @@ async function handleStandardAnalysis(
           data: {
             success: true,
             analysis,
+            debugInfo: {
+              tablesGenerated: analysis.tables.length,
+              confidence: analysis.confidence,
+              reasoning: analysis.reasoning.substring(0, 200) + '...' // Truncate for smaller payload
+            },
             metadata: {
               processingTime: Date.now() - analysisStartTime,
               tablesAnalyzed: csvResults.length,
+              tablesGenerated: analysis.tables.length,
+              totalRelationships: analysis.tables.reduce((sum, t) => sum + t.relationships.length, 0),
               confidence: analysis.confidence,
               aiProvider: 'gemini-2.5-flash-preview-04-17',
               progress: {

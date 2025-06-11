@@ -1,60 +1,57 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
-import { User } from "@supabase/supabase-js";
-import {
-  Upload,
-  Brain,
-  Eye,
-  Download,
-  Cloud,
-  CheckCircle2,
-  ArrowRight,
-  Sparkles,
-  Settings,
-  RotateCcw,
-  Save,
-  Share2,
-  AlertCircle,
-  Info,
-  Play,
-  FileText,
-  Zap,
-} from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
+import { User } from "@supabase/supabase-js";
+import {
+  AlertCircle,
+  ArrowRight,
+  Brain,
+  CheckCircle2,
+  Cloud,
+  Download,
+  Eye,
+  FileText,
+  Info,
+  Play,
+  RotateCcw,
+  Sparkles,
+  Upload,
+  Zap,
+} from "lucide-react";
+import React, { useCallback, useState } from "react";
 
 // Import our feature components
-import { EnhancedCSVDropzone } from "@/components/csv/enhanced-csv-dropzone";
 import { SchemaOptimizationPanel } from "@/components/ai/schema-optimization-panel";
-import { VisualSchemaEditor } from "@/components/schema/visual-schema-editor";
+import { EnhancedCSVDropzone } from "@/components/csv/enhanced-csv-dropzone";
 import { ExportManagerUI } from "@/components/export/export-manager-ui";
-import { ProjectSelector } from "@/components/supabase/project-selector";
-import { MigrationDeployer } from "@/components/supabase/migration-deployer";
 import { FeedbackManager } from "@/components/feedback/feedback-manager";
+import { VisualSchemaEditor } from "@/components/schema/visual-schema-editor";
+import { MigrationDeployer } from "@/components/supabase/migration-deployer";
+import { ProjectSelector } from "@/components/supabase/project-selector";
 
 // Import types and utilities
-import type { CSVValidationResult } from "@/lib/csv/validator";
-import type {
-  DatabaseSchema,
-  Table,
-  Column,
-  PostgresType,
-  ColumnConstraint,
-  ConstraintType,
-} from "@/types/schema.types";
 import type { SchemaOptimizationResult } from "@/lib/ai/schema-optimizer";
+import type { CSVValidationResult } from "@/lib/csv/validator";
 import type {
   DeploymentResult,
   SupabaseProject,
 } from "@/lib/supabase/management";
 import { generateId } from "@/lib/utils";
 import type { WorkflowState as OAuthWorkflowState } from "@/lib/workflow/state-manager";
+import type {
+  Column,
+  ColumnConstraint,
+  ConstraintType,
+  DatabaseSchema,
+  PostgresType,
+  Table,
+} from "@/types/schema.types";
+import { SupabaseLogoMark } from "../supabase-logo";
 
 interface SchemaWorkflowProps {
   user: User;
@@ -76,6 +73,7 @@ interface WorkflowState {
   isProcessing: boolean;
   completedSteps: Set<WorkflowStep>;
   error?: string | undefined;
+  selectedProject?: SupabaseProject | undefined;
   projectData?:
     | {
         projectId: string;
@@ -110,6 +108,25 @@ interface AIAnalysisTable {
     columns: string[];
     unique: boolean;
   }>;
+  relationships?: AIAnalysisRelationship[];
+  rlsPolicies?: AIAnalysisRLSPolicy[];
+}
+
+interface AIAnalysisRelationship {
+  name: string;
+  type: "one-to-one" | "one-to-many" | "many-to-many";
+  sourceTable: string;
+  sourceColumn: string;
+  targetTable: string;
+  targetColumn: string;
+}
+
+interface AIAnalysisRLSPolicy {
+  name: string;
+  operation: "SELECT" | "INSERT" | "UPDATE" | "DELETE";
+  using?: string;
+  with_check?: boolean;
+  definition?: string;
 }
 
 // Remove unused type
@@ -163,7 +180,7 @@ const WORKFLOW_STEPS: Array<{
     id: "deploy",
     title: "Deploy to Supabase",
     description: "Deploy your schema to Supabase project",
-    icon: Cloud,
+    icon: SupabaseLogoMark,
     estimatedTime: "3-5 min",
   },
 ];
@@ -188,8 +205,31 @@ const mapToPostgresType = (type: string): PostgresType => {
   return typeMap[type.toLowerCase()] || "TEXT";
 };
 
-// Add constraint type mapping
+// Add constraint type mapping - handle AI-generated constraint strings properly
 const mapToConstraintType = (constraint: string): ConstraintType => {
+  const normalized = constraint.toLowerCase().trim();
+
+  // Handle exact matches first
+  if (normalized === "primary key" || normalized.includes("primary key")) {
+    return "PRIMARY KEY";
+  }
+  if (normalized === "foreign key" || normalized.includes("foreign key")) {
+    return "FOREIGN KEY";
+  }
+  if (normalized === "unique") {
+    return "UNIQUE";
+  }
+  if (normalized === "not null") {
+    return "NOT NULL";
+  }
+  if (normalized.startsWith("default")) {
+    return "DEFAULT";
+  }
+  if (normalized.startsWith("check") || normalized.includes("check")) {
+    return "CHECK";
+  }
+
+  // Fallback patterns for common constraint formats
   const constraintMap: Record<string, ConstraintType> = {
     primary_key: "PRIMARY KEY",
     foreign_key: "FOREIGN KEY",
@@ -197,10 +237,9 @@ const mapToConstraintType = (constraint: string): ConstraintType => {
     not_null: "NOT NULL",
     check: "CHECK",
     default: "DEFAULT",
-    // Add more mappings as needed
   };
 
-  return constraintMap[constraint.toLowerCase()] || "CHECK";
+  return constraintMap[normalized] || "DEFAULT"; // Better fallback than CHECK
 };
 
 export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
@@ -212,7 +251,6 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
   });
 
   const [showWelcome, setShowWelcome] = useState(true);
-  const [activeTab, setActiveTab] = useState("workflow");
 
   // Calculate overall progress
   const overallProgress =
@@ -310,7 +348,25 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
       return;
     }
 
-    updateState({ isProcessing: true, error: undefined });
+    // Initialize analysis progress with stages - matches what the server defines
+    const stages = [
+      { name: "Initializing analysis", weight: 10 },
+      { name: "Processing CSV data", weight: 20 },
+      { name: "Analyzing data patterns", weight: 25 },
+      { name: "Generating schema structure", weight: 25 },
+      { name: "Optimizing relationships", weight: 10 },
+      { name: "Finalizing schema", weight: 10 },
+    ];
+
+    updateState({
+      isProcessing: true,
+      error: undefined,
+      analysisProgress: {
+        currentStage: "",
+        currentProgress: 0,
+        stages: stages,
+      },
+    });
 
     try {
       const csvParseResults = convertToAPIFormat(state.csvResults);
@@ -352,8 +408,14 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
 
         for (const line of lines) {
           if (line.startsWith("data: ")) {
+            const jsonData = line.slice(6);
+            // Skip empty data lines
+            if (!jsonData.trim()) {
+              continue;
+            }
+
             try {
-              const event = JSON.parse(line.slice(6));
+              const event = JSON.parse(jsonData);
 
               switch (event.type) {
                 case "metadata":
@@ -361,13 +423,14 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                   break;
 
                 case "progress":
-                  updateState({
+                  setState((prevState) => ({
+                    ...prevState,
                     analysisProgress: {
                       currentStage: event.data.stage,
                       currentProgress: event.data.progress,
-                      stages: state.analysisProgress?.stages || [],
+                      stages: prevState.analysisProgress?.stages || stages,
                     },
-                  });
+                  }));
                   break;
 
                 case "complete":
@@ -398,9 +461,44 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                               scale: col.scale || 0,
                               defaultValue: col.defaultValue || "",
                               constraints: col.constraints.map(
-                                (c): ColumnConstraint => ({
-                                  type: mapToConstraintType(c),
-                                })
+                                (c): ColumnConstraint => {
+                                  const constraintType = mapToConstraintType(c);
+                                  const constraint: ColumnConstraint = {
+                                    type: constraintType,
+                                  };
+
+                                  // Extract constraint values
+                                  if (
+                                    constraintType === "DEFAULT" &&
+                                    c.toLowerCase().startsWith("default ")
+                                  ) {
+                                    constraint.value = c.substring(8).trim(); // Remove "DEFAULT " prefix
+                                  } else if (
+                                    constraintType === "CHECK" &&
+                                    c.toLowerCase().includes("check")
+                                  ) {
+                                    // Extract check condition from "CHECK (condition)" format
+                                    const checkMatch =
+                                      c.match(/check\s*\((.+)\)/i);
+                                    if (checkMatch) {
+                                      constraint.value = checkMatch[1];
+                                    }
+                                  } else if (
+                                    constraintType === "FOREIGN KEY" &&
+                                    c.toLowerCase().includes("references")
+                                  ) {
+                                    // Extract foreign key reference
+                                    const refMatch = c.match(
+                                      /references\s+(\w+)\s*\((\w+)\)/i
+                                    );
+                                    if (refMatch) {
+                                      constraint.referencedTable = refMatch[1];
+                                      constraint.referencedColumn = refMatch[2];
+                                    }
+                                  }
+
+                                  return constraint;
+                                }
                               ),
                               comment: col.reasoning || "",
                             })
@@ -413,8 +511,43 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                           })),
                         })
                       ),
-                      relationships: [],
-                      rlsPolicies: [],
+                      relationships: analysis.tables.flatMap(
+                        (table: AIAnalysisTable) =>
+                          (table.relationships || []).map(
+                            (rel: AIAnalysisRelationship) => ({
+                              id: generateId(),
+                              name: `${table.name}_${rel.sourceColumn}_fk`,
+                              type: rel.type as
+                                | "one-to-one"
+                                | "one-to-many"
+                                | "many-to-many",
+                              sourceTable: table.name,
+                              sourceColumn: rel.sourceColumn,
+                              targetTable: rel.targetTable,
+                              targetColumn: rel.targetColumn,
+                              onDelete: "CASCADE" as const,
+                              onUpdate: "CASCADE" as const,
+                            })
+                          )
+                      ),
+                      rlsPolicies: analysis.tables.flatMap(
+                        (table: AIAnalysisTable) =>
+                          (table.rlsPolicies || []).map(
+                            (policy: AIAnalysisRLSPolicy) => ({
+                              id: generateId(),
+                              tableName: table.name,
+                              name: policy.name,
+                              command: policy.operation as
+                                | "SELECT"
+                                | "INSERT"
+                                | "UPDATE"
+                                | "DELETE",
+                              using: policy.using || policy.definition || "",
+                              withCheck: policy.with_check ? "" : "",
+                              roles: ["authenticated"],
+                            })
+                          )
+                      ),
                     };
 
                     // Initialize optimization result with the generated schema
@@ -474,6 +607,21 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
               }
             } catch (e) {
               console.error("Error parsing SSE:", e);
+              console.log("Failed JSON data length:", jsonData.length);
+              console.log("First 200 chars:", jsonData.substring(0, 200));
+              console.log(
+                "Last 200 chars:",
+                jsonData.substring(Math.max(0, jsonData.length - 200))
+              );
+
+              // If it's a very large JSON payload, it might be getting truncated
+              if (jsonData.length > 50000) {
+                console.warn(
+                  "Large JSON payload detected - may be truncated by browser/server limits"
+                );
+                // Try to continue processing other events
+                continue;
+              }
             }
           }
         }
@@ -541,6 +689,14 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
     [updateState, markStepComplete]
   );
 
+  // Handle project selection
+  const handleProjectSelect = useCallback(
+    (project: SupabaseProject) => {
+      updateState({ selectedProject: project });
+    },
+    [updateState]
+  );
+
   // Restart workflow
   const restartWorkflow = useCallback(() => {
     setState({
@@ -551,6 +707,7 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
       isProcessing: false,
       completedSteps: new Set(),
       projectData: undefined,
+      selectedProject: undefined,
     });
     setShowWelcome(false);
   }, []);
@@ -668,25 +825,31 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
   }
 
   return (
-    <div className="flex-1 w-full">
-      <div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <div className="flex-1 size-full flex flex-col">
+      <div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 shrink-0">
         <div className="max-w-7xl mx-auto px-6 py-4">
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h1 className="text-2xl font-bold">Schema Builder</h1>
+              <h1 className="text-2xl font-bold">Supabase Schema Builder</h1>
               <p className="text-muted-foreground">
-                Welcome back, {user.email?.split("@")[0]}! Let&apos;s create
-                something amazing.
+                Welcome back,{" "}
+                {user.email &&
+                  user.email?.split("@")[0]?.charAt(0).toUpperCase() +
+                    user.email?.split("@")[0]?.slice(1)}
+                ! Let&apos;s create something amazing.
               </p>
             </div>
 
             <div className="flex items-center gap-3">
-              <div className="text-right">
-                <p className="text-sm font-medium">
+              <div className="text-right flex flex-col gap-1">
+                <p className="text-xs font-medium">
                   {overallProgress.toFixed(0)}% Complete
                 </p>
-                <Progress value={overallProgress} className="w-32 h-2" />
+                <Progress
+                  value={overallProgress}
+                  className="w-32 h-2 border border-accent/50"
+                />
               </div>
               <Button
                 variant="outline"
@@ -723,7 +886,7 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                     className={cn(
                       "flex items-center gap-2 min-w-max",
                       status === "completed" &&
-                        "text-green-700 border-green-200 bg-green-50"
+                        "text-primary dark:text-accent border border-accent/20 bg-accent/10"
                     )}
                   >
                     {status === "completed" ? (
@@ -744,677 +907,613 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto p-6">
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="workflow">Workflow</TabsTrigger>
-            <TabsTrigger value="overview">Project Overview</TabsTrigger>
-            <TabsTrigger value="settings">Settings</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="workflow" className="mt-6">
-            {/* Current Step Content */}
-            <div className="space-y-6">
-              {state.currentStep === "upload" && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Upload className="h-5 w-5" />
-                      Upload CSV Files
-                    </CardTitle>
-                    <p className="text-muted-foreground">
-                      Upload your CSV files to begin schema generation.
-                      We&apos;ll validate and analyze your data.
-                    </p>
-                  </CardHeader>
-                  <CardContent>
-                    <EnhancedCSVDropzone
-                      onValidationComplete={handleCSVValidation}
-                      maxFiles={5}
-                      initialFiles={state.csvResults}
-                    />
-                  </CardContent>
-                </Card>
-              )}
-
-              {state.currentStep === "analyze" && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Brain className="h-5 w-5" />
-                      AI Schema Analysis
-                    </CardTitle>
-                    <p className="text-muted-foreground">
-                      AI is analyzing your CSV data to generate an optimized
-                      PostgreSQL schema.
-                    </p>
-                  </CardHeader>
-                  <CardContent>
-                    {state.csvResults.length > 0 ? (
-                      <div className="space-y-6">
-                        {!state.isProcessing &&
-                          !state.generatedSchema &&
-                          !state.error && (
-                            <div className="text-center py-8">
-                              <Brain className="h-12 w-12 text-primary mx-auto mb-4" />
-                              <h3 className="text-lg font-medium mb-2">
-                                Ready to Analyze
-                              </h3>
-                              <p className="text-muted-foreground mb-4">
-                                Click below to start AI-powered schema
-                                generation from your uploaded CSV files.
-                              </p>
-                              <Button
-                                onClick={performAIAnalysis}
-                                className="gap-2"
-                                size="lg"
-                              >
-                                <Sparkles className="h-4 w-4" />
-                                Start AI Analysis
-                              </Button>
-                            </div>
-                          )}
-
-                        {state.isProcessing && (
-                          <div className="text-center py-8">
-                            <div className="flex flex-col items-center gap-4">
-                              <div className="relative">
-                                <Brain className="h-12 w-12 text-primary animate-pulse" />
-                                <div className="absolute -inset-2 rounded-full border-2 border-primary/20 animate-spin border-t-primary"></div>
-                              </div>
-                              <div className="space-y-2">
-                                <h3 className="text-lg font-medium">
-                                  {state.analysisProgress?.currentStage ||
-                                    "Analyzing with AI..."}
-                                </h3>
-                                <p className="text-muted-foreground">
-                                  This may take 30-60 seconds depending on data
-                                  complexity
-                                </p>
-                              </div>
-                              <div className="w-full max-w-md space-y-4">
-                                <Progress
-                                  value={
-                                    state.analysisProgress?.currentProgress
-                                  }
-                                  className="h-2"
-                                />
-                                <div className="text-left bg-muted/50 rounded-lg p-4 h-32 overflow-y-auto space-y-2 text-sm font-mono">
-                                  {(state.analysisProgress?.stages || []).map(
-                                    (stage, index) => {
-                                      const isComplete =
-                                        (state.analysisProgress
-                                          ?.currentProgress || 0) >=
-                                        (state.analysisProgress?.stages || [])
-                                          .slice(0, index + 1)
-                                          .reduce(
-                                            (sum, s) => sum + s.weight,
-                                            0
-                                          );
-                                      const isCurrent =
-                                        stage.name ===
-                                        state.analysisProgress?.currentStage;
-
-                                      return (
-                                        <div
-                                          key={stage.name}
-                                          className={cn(
-                                            "flex items-center gap-2",
-                                            isComplete
-                                              ? "text-green-600"
-                                              : "text-muted-foreground",
-                                            isCurrent && "animate-pulse"
-                                          )}
-                                        >
-                                          {isComplete ? (
-                                            <CheckCircle2 className="h-4 w-4" />
-                                          ) : (
-                                            <div className="h-4 w-4 rounded-full border-2 border-muted-foreground" />
-                                          )}
-                                          {stage.name}
-                                        </div>
-                                      );
-                                    }
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        {state.error && (
-                          <div className="text-center py-8">
-                            <AlertCircle className="h-12 w-12 text-red-600 mx-auto mb-4" />
-                            <h3 className="text-lg font-medium mb-2">
-                              Analysis Failed
-                            </h3>
-                            <p className="text-muted-foreground mb-4">
-                              {state.error}
-                            </p>
-                            <div className="flex items-center justify-center gap-3">
-                              <Button
-                                onClick={() => {
-                                  updateState({ error: undefined });
-                                  performAIAnalysis();
-                                }}
-                                className="gap-2"
-                              >
-                                <RotateCcw className="h-4 w-4" />
-                                Try Again
-                              </Button>
-                              <Button
-                                variant="outline"
-                                onClick={() =>
-                                  updateState({ error: undefined })
-                                }
-                              >
-                                Cancel
-                              </Button>
-                            </div>
-                          </div>
-                        )}
-
-                        {state.generatedSchema && !state.error && (
-                          <div className="text-center py-8">
-                            <CheckCircle2 className="h-12 w-12 text-green-600 mx-auto mb-4" />
-                            <h3 className="text-lg font-medium mb-2">
-                              Analysis Complete!
-                            </h3>
-                            <p className="text-muted-foreground mb-4">
-                              AI has successfully generated a schema with{" "}
-                              {state.generatedSchema.tables.length} tables.
-                            </p>
-                            <div className="flex items-center justify-center gap-3">
-                              <Badge variant="outline">
-                                {state.generatedSchema.tables.length} Tables
-                              </Badge>
-                              <Badge variant="outline">
-                                {state.generatedSchema.tables.reduce(
-                                  (acc, table) => acc + table.columns.length,
-                                  0
-                                )}{" "}
-                                Columns
-                              </Badge>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <Alert>
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertDescription>
-                          Please upload CSV files first to begin analysis.
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
-
-              {state.currentStep === "optimize" && (
-                <SchemaOptimizationPanel
-                  optimizationResult={state.optimizationResult!}
-                  onApplySuggestion={(suggestion) => {
-                    console.log("Applying suggestion:", suggestion);
-                  }}
-                  onRefineSchema={async (feedback) => {
-                    try {
-                      // Reset state and move back to analysis step
-                      updateState({
-                        currentStep: "analyze",
-                        isProcessing: true,
-                        error: undefined,
-                        analysisProgress: {
-                          currentStage: "",
-                          currentProgress: 0,
-                          stages: [],
-                        },
-                        generatedSchema: undefined,
-                      });
-
-                      const response = await fetch("/api/ai/analyze", {
-                        method: "POST",
-                        headers: {
-                          "Content-Type": "application/json",
-                        },
-                        body: JSON.stringify({
-                          csvResults: convertToAPIFormat(state.csvResults),
-                          options: {
-                            includeOptimizations: true,
-                            targetUseCase: "web-app",
-                          },
-                          prompt: feedback,
-                          previousSchema: state.generatedSchema, // Send previous schema as reference
-                        }),
-                      });
-
-                      if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(
-                          errorData.error ||
-                            errorData.message ||
-                            "Analysis failed"
-                        );
-                      }
-
-                      const reader = response.body?.getReader();
-                      const decoder = new TextDecoder();
-
-                      if (!reader) {
-                        throw new Error("Failed to initialize stream reader");
-                      }
-
-                      while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-
-                        const chunk = decoder.decode(value);
-                        const lines = chunk.split("\n");
-
-                        for (const line of lines) {
-                          if (line.startsWith("data: ")) {
-                            try {
-                              const event = JSON.parse(line.slice(6));
-
-                              switch (event.type) {
-                                case "metadata":
-                                  console.log("Analysis metadata:", event.data);
-                                  break;
-
-                                case "progress":
-                                  updateState({
-                                    analysisProgress: {
-                                      currentStage: event.data.stage,
-                                      currentProgress: event.data.progress,
-                                      stages:
-                                        state.analysisProgress?.stages || [],
-                                    },
-                                  });
-                                  break;
-
-                                case "complete":
-                                  if (event.data.success) {
-                                    const { analysis, metadata } = event.data;
-
-                                    // Convert AI analysis to DatabaseSchema format
-                                    const refinedSchema: DatabaseSchema = {
-                                      id: generateId(),
-                                      name: "AI Generated Schema",
-                                      version: "1.0.0",
-                                      createdAt: new Date(),
-                                      updatedAt: new Date(),
-                                      tables: analysis.tables.map(
-                                        (table: AIAnalysisTable): Table => ({
-                                          id: generateId(),
-                                          name: table.name,
-                                          comment: table.comment || "",
-                                          position: { x: 0, y: 0 },
-                                          columns: table.columns.map(
-                                            (col): Column => ({
-                                              id: generateId(),
-                                              name: col.name,
-                                              type: mapToPostgresType(col.type),
-                                              nullable: col.nullable,
-                                              length: col.length || 0,
-                                              precision: col.precision || 0,
-                                              scale: col.scale || 0,
-                                              defaultValue:
-                                                col.defaultValue || "",
-                                              constraints: col.constraints.map(
-                                                (c): ColumnConstraint => ({
-                                                  type: mapToConstraintType(c),
-                                                })
-                                              ),
-                                              comment: col.reasoning || "",
-                                            })
-                                          ),
-                                          indexes: table.indexes.map((idx) => ({
-                                            id: generateId(),
-                                            name: idx.name,
-                                            columns: idx.columns,
-                                            unique: idx.unique,
-                                          })),
-                                        })
-                                      ),
-                                      relationships: [],
-                                      rlsPolicies: [],
-                                    };
-
-                                    // Update optimization result with the refined schema
-                                    const updatedOptimizationResult: SchemaOptimizationResult =
-                                      {
-                                        originalSchema:
-                                          state.optimizationResult!
-                                            .originalSchema,
-                                        optimizedSchema: refinedSchema,
-                                        suggestions: [],
-                                        summary: {
-                                          totalSuggestions: 0,
-                                          criticalIssues: 0,
-                                          autoApplicableCount: 0,
-                                          estimatedPerformanceGain: 0,
-                                          confidenceScore:
-                                            metadata?.confidence || 85,
-                                        },
-                                        aiAnalysis: {
-                                          reasoning:
-                                            analysis.reasoning ||
-                                            "Schema refined based on feedback",
-                                          suggestions: [],
-                                          tables: refinedSchema.tables.map(
-                                            (table) => ({
-                                              name: table.name,
-                                              columns: table.columns.map(
-                                                (col) => ({
-                                                  name: col.name,
-                                                  type: col.type,
-                                                  nullable: col.nullable,
-                                                  length: col.length,
-                                                  precision: col.precision,
-                                                  scale: col.scale,
-                                                  defaultValue:
-                                                    col.defaultValue,
-                                                  constraints:
-                                                    col.constraints.map(
-                                                      (c) => c.type
-                                                    ),
-                                                  reasoning:
-                                                    col.comment ||
-                                                    `Column ${col.name} of type ${col.type}`,
-                                                })
-                                              ),
-                                              relationships: [],
-                                              indexes: [],
-                                              comment: table.comment,
-                                              rlsPolicies: [],
-                                            })
-                                          ),
-                                          confidence:
-                                            metadata?.confidence || 0.85,
-                                        },
-                                      };
-
-                                    updateState({
-                                      generatedSchema: refinedSchema,
-                                      optimizationResult:
-                                        updatedOptimizationResult,
-                                      isProcessing: false,
-                                      analysisProgress: metadata.progress,
-                                      currentStep: "optimize", // Return to optimize step after completion
-                                    });
-
-                                    // Mark analyze step as completed again
-                                    markStepComplete("analyze");
-                                  }
-                                  break;
-
-                                case "error":
-                                  throw new Error(
-                                    event.data.message || "Analysis failed"
-                                  );
-                              }
-                            } catch (e) {
-                              console.error("Error parsing SSE:", e);
-                            }
-                          }
-                        }
-                      }
-                    } catch (error) {
-                      console.error("Schema refinement failed:", error);
-                      updateState({
-                        isProcessing: false,
-                        error:
-                          error instanceof Error
-                            ? error.message
-                            : "Schema refinement failed. Please try again.",
-                        currentStep: "optimize", // Return to optimize step on error
-                      });
-                    }
-                  }}
-                  onExportOptimized={() => {
-                    handleOptimization({
-                      originalSchema: state.generatedSchema!,
-                      optimizedSchema: state.generatedSchema!,
-                      suggestions: [],
-                      summary: {
-                        totalSuggestions: 0,
-                        criticalIssues: 0,
-                        autoApplicableCount: 0,
-                        estimatedPerformanceGain: 0,
-                        confidenceScore: 85,
-                      },
-                      aiAnalysis: {
-                        reasoning:
-                          "Initial schema generated successfully. Ready for optimization.",
-                        suggestions: [],
-                        tables: state.generatedSchema!.tables.map((table) => ({
-                          name: table.name,
-                          columns: table.columns.map((col) => ({
-                            name: col.name,
-                            type: col.type,
-                            nullable: col.nullable,
-                            length: col.length,
-                            precision: col.precision,
-                            scale: col.scale,
-                            defaultValue: col.defaultValue,
-                            constraints: col.constraints.map((c) => c.type),
-                            reasoning:
-                              col.comment ||
-                              `Column ${col.name} of type ${col.type}`,
-                          })),
-                          relationships: [],
-                          indexes: [],
-                          comment: table.comment,
-                          rlsPolicies: [],
-                        })),
-                        confidence: 0.85,
-                      },
-                    });
-                  }}
-                />
-              )}
-
-              {state.currentStep === "design" && state.generatedSchema && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Eye className="h-5 w-5" />
-                      Visual Schema Design
-                    </CardTitle>
-                    <p className="text-muted-foreground">
-                      Fine-tune your schema with our visual editor. Drag tables,
-                      edit relationships, and customize properties.
-                    </p>
-                  </CardHeader>
-                  <CardContent>
-                    <VisualSchemaEditor
-                      schema={state.generatedSchema}
-                      onSchemaChange={handleDesignComplete}
-                      className="h-[600px]"
-                    />
-                  </CardContent>
-                </Card>
-              )}
-
-              {state.currentStep === "export" && state.generatedSchema && (
-                <div>
-                  <ExportManagerUI schema={state.generatedSchema} />
-                  <div className="mt-6 text-center">
-                    <Button onClick={handleExportComplete} className="gap-2">
-                      <CheckCircle2 className="h-4 w-4" />
-                      Continue to Deployment
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {state.currentStep === "deploy" && (
-                <div className="space-y-6">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2">
-                        <Cloud className="h-5 w-5" />
-                        Deploy to Supabase
-                      </CardTitle>
-                      <p className="text-muted-foreground">
-                        Choose a Supabase project and deploy your schema with
-                        one click.
-                      </p>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-6">
-                        <ProjectSelector
-                          onProjectSelect={(project) => {
-                            handleDeployComplete({
-                              success: true,
-                              projectId: project.id,
-                              projectName: project.name,
-                              dbUrl: project.database?.host || "",
-                            });
-                          }}
-                          onCreateProject={(project: SupabaseProject) => {
-                            handleDeployComplete({
-                              success: true,
-                              projectId: project.id,
-                              projectName: project.name,
-                              dbUrl: project.database?.host || "",
-                            });
-                          }}
-                          workflowState={getOAuthWorkflowState()}
-                        />
-
-                        {state.generatedSchema && (
-                          <MigrationDeployer
-                            schema={state.generatedSchema}
-                            onDeploymentComplete={handleDeployComplete}
-                          />
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              )}
-            </div>
-          </TabsContent>
-
-          <TabsContent value="overview" className="mt-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {/* Project Stats */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Project Statistics</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">CSV Files</span>
-                      <Badge>{state.csvResults.length}</Badge>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Tables</span>
-                      <Badge>{state.generatedSchema?.tables.length || 0}</Badge>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">
-                        Relationships
-                      </span>
-                      <Badge>
-                        {state.generatedSchema?.relationships?.length || 0}
-                      </Badge>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Progress</span>
-                      <Badge>{overallProgress.toFixed(0)}%</Badge>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Recent Activity */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Recent Activity</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2 text-sm">
-                    {Array.from(state.completedSteps).map((step) => {
-                      const stepInfo = WORKFLOW_STEPS.find(
-                        (s) => s.id === step
-                      );
-                      return (
-                        <div
-                          key={step}
-                          className="flex items-center gap-2 text-muted-foreground"
-                        >
-                          <CheckCircle2 className="h-3 w-3 text-green-600" />
-                          {stepInfo?.title} completed
-                        </div>
-                      );
-                    })}
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Quick Actions */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Quick Actions</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full justify-start gap-2"
-                    >
-                      <Save className="h-4 w-4" />
-                      Save Progress
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full justify-start gap-2"
-                    >
-                      <Share2 className="h-4 w-4" />
-                      Share Project
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full justify-start gap-2"
-                      onClick={restartWorkflow}
-                    >
-                      <RotateCcw className="h-4 w-4" />
-                      Start Over
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="settings" className="mt-6">
-            <Card>
+      <div className="w-full max-w-7xl mx-auto p-6 grow flex flex-col">
+        {/* Current Step Content */}
+        <div className="space-y-6 grow flex flex-col">
+          {state.currentStep === "upload" && (
+            <Card className="grow flex flex-col">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Settings className="h-5 w-5" />
-                  Workflow Settings
+                  <Upload className="h-5 w-5" />
+                  Upload CSV Files
                 </CardTitle>
+                <p className="text-muted-foreground">
+                  Upload your CSV files to begin schema generation. We&apos;ll
+                  validate and analyze your data.
+                </p>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <Alert>
-                    <Info className="h-4 w-4" />
-                    <AlertDescription>
-                      Settings and preferences will be available in the next
-                      update.
-                    </AlertDescription>
-                  </Alert>
-                </div>
+              <CardContent className="grow flex flex-col">
+                <EnhancedCSVDropzone
+                  className="grow"
+                  onValidationComplete={handleCSVValidation}
+                  maxFiles={5}
+                  initialFiles={state.csvResults}
+                />
               </CardContent>
             </Card>
-          </TabsContent>
-        </Tabs>
+          )}
+
+          {state.currentStep === "analyze" && (
+            <Card className="grow flex flex-col">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Brain className="h-5 w-5" />
+                  AI Schema Analysis
+                </CardTitle>
+                <p className="text-muted-foreground">
+                  AI is analyzing your CSV data to generate an optimized
+                  PostgreSQL schema.
+                </p>
+              </CardHeader>
+              <CardContent className="grow flex flex-col">
+                {state.csvResults.length > 0 ? (
+                  <div className="space-y-6 grow flex flex-col">
+                    {!state.isProcessing &&
+                      !state.generatedSchema &&
+                      !state.error && (
+                        <div className="text-center py-8">
+                          <Brain className="size-12 text-primary mx-auto mb-4" />
+                          <h3 className="text-lg font-medium mb-2">
+                            Ready to Analyze
+                          </h3>
+                          <p className="text-muted-foreground mb-4">
+                            Click below to start AI-powered schema generation
+                            from your uploaded CSV files.
+                          </p>
+                          <Button
+                            onClick={performAIAnalysis}
+                            className="gap-2"
+                            size="lg"
+                          >
+                            <Sparkles className="h-4 w-4" />
+                            Start AI Analysis
+                          </Button>
+                        </div>
+                      )}
+
+                    {state.isProcessing && (
+                      <div className="text-center py-8 grow flex flex-col">
+                        <div className="flex flex-col items-center gap-4">
+                          <div className="relative">
+                            <Brain className="size-12 text-primary dark:text-accent animate-pulse" />
+                            <div className="absolute -inset-2 rounded-full border-2 border-primary/20 animate-spin border-t-primary"></div>
+                          </div>
+                          <div className="space-y-2">
+                            <h3 className="text-lg font-medium">
+                              {state.analysisProgress?.currentStage ||
+                                "Analyzing with AI..."}
+                            </h3>
+                            <p className="text-muted-foreground">
+                              This may take 30-60 seconds depending on data
+                              complexity
+                            </p>
+                          </div>
+                          <div className="w-full max-w-md space-y-4">
+                            <Progress
+                              value={state.analysisProgress?.currentProgress}
+                              className="h-2"
+                            />
+                            <div className="text-left bg-muted/50 rounded-lg p-4 h-32 overflow-y-auto space-y-2 text-sm font-mono">
+                              {(state.analysisProgress?.stages || []).map(
+                                (stage, index) => {
+                                  const isComplete =
+                                    (state.analysisProgress?.currentProgress ||
+                                      0) >=
+                                    (state.analysisProgress?.stages || [])
+                                      .slice(0, index + 1)
+                                      .reduce((sum, s) => sum + s.weight, 0);
+                                  const isCurrent =
+                                    stage.name ===
+                                    state.analysisProgress?.currentStage;
+
+                                  return (
+                                    <div
+                                      key={stage.name}
+                                      className={cn(
+                                        "flex items-center gap-2",
+                                        isComplete
+                                          ? "text-green-600"
+                                          : "text-muted-foreground",
+                                        isCurrent && "animate-pulse"
+                                      )}
+                                    >
+                                      {isComplete ? (
+                                        <CheckCircle2 className="h-4 w-4" />
+                                      ) : (
+                                        <div className="h-4 w-4 rounded-full border-2 border-muted-foreground" />
+                                      )}
+                                      {stage.name}
+                                    </div>
+                                  );
+                                }
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {state.error && (
+                      <div className="text-center py-8 grow flex flex-col">
+                        <AlertCircle className="h-12 w-12 text-red-600 mx-auto mb-4" />
+                        <h3 className="text-lg font-medium mb-2">
+                          Analysis Failed
+                        </h3>
+                        <p className="text-muted-foreground mb-4">
+                          {state.error}
+                        </p>
+                        <div className="flex items-center justify-center gap-3">
+                          <Button
+                            onClick={() => {
+                              updateState({ error: undefined });
+                              performAIAnalysis();
+                            }}
+                            className="gap-2"
+                          >
+                            <RotateCcw className="h-4 w-4" />
+                            Try Again
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => updateState({ error: undefined })}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {state.generatedSchema && !state.error && (
+                      <div className="text-center py-8 grow flex flex-col">
+                        <CheckCircle2 className="h-12 w-12 text-green-600 mx-auto mb-4" />
+                        <h3 className="text-lg font-medium mb-2">
+                          Analysis Complete!
+                        </h3>
+                        <p className="text-muted-foreground mb-4">
+                          AI has successfully generated a schema with{" "}
+                          {state.generatedSchema.tables.length} tables.
+                        </p>
+                        <div className="flex items-center justify-center gap-3">
+                          <Badge variant="outline">
+                            {state.generatedSchema.tables.length} Tables
+                          </Badge>
+                          <Badge variant="outline">
+                            {state.generatedSchema.tables.reduce(
+                              (acc, table) => acc + table.columns.length,
+                              0
+                            )}{" "}
+                            Columns
+                          </Badge>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <Alert>
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      Please upload CSV files first to begin analysis.
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {state.currentStep === "optimize" && (
+            <SchemaOptimizationPanel
+              className="grow flex flex-col"
+              optimizationResult={state.optimizationResult!}
+              onApplySuggestion={(suggestion) => {
+                console.log("Applying suggestion:", suggestion);
+              }}
+              onRefineSchema={async (feedback) => {
+                try {
+                  // Reset state and move back to analysis step
+                  updateState({
+                    currentStep: "analyze",
+                    isProcessing: true,
+                    error: undefined,
+                    analysisProgress: {
+                      currentStage: "",
+                      currentProgress: 0,
+                      stages: [],
+                    },
+                    generatedSchema: undefined,
+                  });
+
+                  const response = await fetch("/api/ai/analyze", {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                      csvResults: convertToAPIFormat(state.csvResults),
+                      options: {
+                        includeOptimizations: true,
+                        targetUseCase: "web-app",
+                      },
+                      prompt: feedback,
+                      previousSchema: state.generatedSchema, // Send previous schema as reference
+                    }),
+                  });
+
+                  if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(
+                      errorData.error || errorData.message || "Analysis failed"
+                    );
+                  }
+
+                  const reader = response.body?.getReader();
+                  const decoder = new TextDecoder();
+
+                  if (!reader) {
+                    throw new Error("Failed to initialize stream reader");
+                  }
+
+                  while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split("\n");
+
+                    for (const line of lines) {
+                      if (line.startsWith("data: ")) {
+                        try {
+                          const event = JSON.parse(line.slice(6));
+
+                          switch (event.type) {
+                            case "metadata":
+                              console.log("Analysis metadata:", event.data);
+                              break;
+
+                            case "progress":
+                              updateState({
+                                analysisProgress: {
+                                  currentStage: event.data.stage,
+                                  currentProgress: event.data.progress,
+                                  stages: state.analysisProgress?.stages || [],
+                                },
+                              });
+                              break;
+
+                            case "complete":
+                              if (event.data.success) {
+                                const { analysis, metadata } = event.data;
+
+                                // Convert AI analysis to DatabaseSchema format
+                                const refinedSchema: DatabaseSchema = {
+                                  id: generateId(),
+                                  name: "AI Generated Schema",
+                                  version: "1.0.0",
+                                  createdAt: new Date(),
+                                  updatedAt: new Date(),
+                                  tables: analysis.tables.map(
+                                    (table: AIAnalysisTable): Table => ({
+                                      id: generateId(),
+                                      name: table.name,
+                                      comment: table.comment || "",
+                                      position: { x: 0, y: 0 },
+                                      columns: table.columns.map(
+                                        (col): Column => ({
+                                          id: generateId(),
+                                          name: col.name,
+                                          type: mapToPostgresType(col.type),
+                                          nullable: col.nullable,
+                                          length: col.length || 0,
+                                          precision: col.precision || 0,
+                                          scale: col.scale || 0,
+                                          defaultValue: col.defaultValue || "",
+                                          constraints: col.constraints.map(
+                                            (c): ColumnConstraint => {
+                                              const constraintType =
+                                                mapToConstraintType(c);
+                                              const constraint: ColumnConstraint =
+                                                { type: constraintType };
+
+                                              // Extract constraint values
+                                              if (
+                                                constraintType === "DEFAULT" &&
+                                                c
+                                                  .toLowerCase()
+                                                  .startsWith("default ")
+                                              ) {
+                                                constraint.value = c
+                                                  .substring(8)
+                                                  .trim(); // Remove "DEFAULT " prefix
+                                              } else if (
+                                                constraintType === "CHECK" &&
+                                                c
+                                                  .toLowerCase()
+                                                  .includes("check")
+                                              ) {
+                                                // Extract check condition from "CHECK (condition)" format
+                                                const checkMatch =
+                                                  c.match(/check\s*\((.+)\)/i);
+                                                if (checkMatch) {
+                                                  constraint.value =
+                                                    checkMatch[1];
+                                                }
+                                              } else if (
+                                                constraintType ===
+                                                  "FOREIGN KEY" &&
+                                                c
+                                                  .toLowerCase()
+                                                  .includes("references")
+                                              ) {
+                                                // Extract foreign key reference
+                                                const refMatch = c.match(
+                                                  /references\s+(\w+)\s*\((\w+)\)/i
+                                                );
+                                                if (refMatch) {
+                                                  constraint.referencedTable =
+                                                    refMatch[1];
+                                                  constraint.referencedColumn =
+                                                    refMatch[2];
+                                                }
+                                              }
+
+                                              return constraint;
+                                            }
+                                          ),
+                                          comment: col.reasoning || "",
+                                        })
+                                      ),
+                                      indexes: table.indexes.map((idx) => ({
+                                        id: generateId(),
+                                        name: idx.name,
+                                        columns: idx.columns,
+                                        unique: idx.unique,
+                                      })),
+                                    })
+                                  ),
+                                  relationships: (
+                                    analysis.tables as AIAnalysisTable[]
+                                  ).flatMap(
+                                    (table: AIAnalysisTable) =>
+                                      table.relationships?.map(
+                                        (rel: AIAnalysisRelationship) => ({
+                                          id: generateId(),
+                                          name: `${table.name}_${rel.sourceColumn}_fk`,
+                                          type: rel.type,
+                                          sourceTable: table.name,
+                                          sourceColumn: rel.sourceColumn,
+                                          targetTable: rel.targetTable,
+                                          targetColumn: rel.targetColumn,
+                                          onDelete: "CASCADE",
+                                          onUpdate: "CASCADE",
+                                        })
+                                      ) || []
+                                  ),
+                                  rlsPolicies: (
+                                    analysis.tables as AIAnalysisTable[]
+                                  ).flatMap(
+                                    (table: AIAnalysisTable) =>
+                                      table.rlsPolicies?.map(
+                                        (policy: AIAnalysisRLSPolicy) => ({
+                                          id: generateId(),
+                                          tableName: table.name,
+                                          name: policy.name,
+                                          command: policy.operation,
+                                          using:
+                                            policy.using ||
+                                            policy.definition ||
+                                            "",
+                                          withCheck: policy.with_check
+                                            ? ""
+                                            : "",
+                                          roles: ["authenticated"],
+                                        })
+                                      ) || []
+                                  ),
+                                };
+
+                                // Update optimization result with the refined schema
+                                const updatedOptimizationResult: SchemaOptimizationResult =
+                                  {
+                                    originalSchema:
+                                      state.optimizationResult!.originalSchema,
+                                    optimizedSchema: refinedSchema,
+                                    suggestions: [],
+                                    summary: {
+                                      totalSuggestions: 0,
+                                      criticalIssues: 0,
+                                      autoApplicableCount: 0,
+                                      estimatedPerformanceGain: 0,
+                                      confidenceScore:
+                                        metadata?.confidence || 85,
+                                    },
+                                    aiAnalysis: {
+                                      reasoning:
+                                        analysis.reasoning ||
+                                        "Schema refined based on feedback",
+                                      suggestions: [],
+                                      tables: refinedSchema.tables.map(
+                                        (table) => ({
+                                          name: table.name,
+                                          columns: table.columns.map((col) => ({
+                                            name: col.name,
+                                            type: col.type,
+                                            nullable: col.nullable,
+                                            length: col.length,
+                                            precision: col.precision,
+                                            scale: col.scale,
+                                            defaultValue: col.defaultValue,
+                                            constraints: col.constraints.map(
+                                              (c) => c.type
+                                            ),
+                                            reasoning:
+                                              col.comment ||
+                                              `Column ${col.name} of type ${col.type}`,
+                                          })),
+                                          relationships: [],
+                                          indexes: [],
+                                          comment: table.comment,
+                                          rlsPolicies: [],
+                                        })
+                                      ),
+                                      confidence: metadata?.confidence || 0.85,
+                                    },
+                                  };
+
+                                updateState({
+                                  generatedSchema: refinedSchema,
+                                  optimizationResult: updatedOptimizationResult,
+                                  isProcessing: false,
+                                  analysisProgress: metadata.progress,
+                                  currentStep: "optimize", // Return to optimize step after completion
+                                });
+
+                                // Mark analyze step as completed again
+                                markStepComplete("analyze");
+                              }
+                              break;
+
+                            case "error":
+                              throw new Error(
+                                event.data.message || "Analysis failed"
+                              );
+                          }
+                        } catch (e) {
+                          console.error("Error parsing SSE:", e);
+                        }
+                      }
+                    }
+                  }
+                } catch (error) {
+                  console.error("Schema refinement failed:", error);
+                  updateState({
+                    isProcessing: false,
+                    error:
+                      error instanceof Error
+                        ? error.message
+                        : "Schema refinement failed. Please try again.",
+                    currentStep: "optimize", // Return to optimize step on error
+                  });
+                }
+              }}
+              onExportOptimized={() => {
+                handleOptimization({
+                  originalSchema: state.generatedSchema!,
+                  optimizedSchema: state.generatedSchema!,
+                  suggestions: [],
+                  summary: {
+                    totalSuggestions: 0,
+                    criticalIssues: 0,
+                    autoApplicableCount: 0,
+                    estimatedPerformanceGain: 0,
+                    confidenceScore: 85,
+                  },
+                  aiAnalysis: {
+                    reasoning:
+                      "Initial schema generated successfully. Ready for optimization.",
+                    suggestions: [],
+                    tables: state.generatedSchema!.tables.map((table) => ({
+                      name: table.name,
+                      columns: table.columns.map((col) => ({
+                        name: col.name,
+                        type: col.type,
+                        nullable: col.nullable,
+                        length: col.length,
+                        precision: col.precision,
+                        scale: col.scale,
+                        defaultValue: col.defaultValue,
+                        constraints: col.constraints.map((c) => c.type),
+                        reasoning:
+                          col.comment ||
+                          `Column ${col.name} of type ${col.type}`,
+                      })),
+                      relationships: [],
+                      indexes: [],
+                      comment: table.comment,
+                      rlsPolicies: [],
+                    })),
+                    confidence: 0.85,
+                  },
+                });
+              }}
+            />
+          )}
+
+          {state.currentStep === "design" && state.generatedSchema && (
+            <Card className="grow flex flex-col">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Eye className="h-5 w-5" />
+                  Visual Schema Design
+                </CardTitle>
+                <p className="text-muted-foreground">
+                  Fine-tune your schema with our visual editor. Drag tables,
+                  edit relationships, and customize properties.
+                </p>
+              </CardHeader>
+              <CardContent className="grow flex flex-col">
+                <VisualSchemaEditor
+                  schema={state.generatedSchema}
+                  onSchemaChange={handleDesignComplete}
+                  className="min-h-[600px] grow"
+                />
+              </CardContent>
+            </Card>
+          )}
+
+          {state.currentStep === "export" && state.generatedSchema && (
+            <div className="grow flex flex-col gap-4">
+              <div className="flex items-center gap-2 justify-end">
+                <Button onClick={handleExportComplete} className="gap-2">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Continue to Deployment
+                </Button>
+              </div>
+              <ExportManagerUI schema={state.generatedSchema} />
+            </div>
+          )}
+
+          {state.currentStep === "deploy" && (
+            <div className="space-y-6 grow flex flex-col">
+              <Card className="grow flex flex-col">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Cloud className="h-5 w-5" />
+                    Deploy to Supabase
+                  </CardTitle>
+                  <p className="text-muted-foreground">
+                    Choose a Supabase project and deploy your schema with one
+                    click.
+                  </p>
+                </CardHeader>
+                <CardContent className="grow flex flex-col">
+                  <div className="space-y-6 grow flex flex-col">
+                    <ProjectSelector
+                      onProjectSelect={handleProjectSelect}
+                      onCreateProject={(project: SupabaseProject) => {
+                        handleDeployComplete({
+                          success: true,
+                          projectId: project.id,
+                          projectName: project.name,
+                          dbUrl: project.database?.host || "",
+                        });
+                      }}
+                      workflowState={getOAuthWorkflowState()}
+                    />
+
+                    {state.generatedSchema && (
+                      <MigrationDeployer
+                        schema={state.generatedSchema}
+                        {...(state.selectedProject && {
+                          project: state.selectedProject,
+                        })}
+                        onDeploymentComplete={handleDeployComplete}
+                      />
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Global Feedback Manager */}

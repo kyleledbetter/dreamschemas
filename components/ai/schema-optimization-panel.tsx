@@ -1,38 +1,38 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
-import {
-  Brain,
-  Zap,
-  Shield,
-  Database,
-  TrendingUp,
-  CheckCircle2,
-  Info,
-  Eye,
-  EyeOff,
-  RefreshCw,
-  Sparkles,
-  Target,
-  Settings,
-  Download,
-} from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { cn } from "@/lib/utils";
+import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
-  SchemaOptimizationResult,
   OptimizationSuggestion,
+  SchemaOptimizationResult,
 } from "@/lib/ai/schema-optimizer";
+import { cn } from "@/lib/utils";
+import {
+  ArrowRightIcon,
+  Brain,
+  CheckCircle2,
+  Database,
+  Eye,
+  EyeOff,
+  Info,
+  RefreshCw,
+  Settings,
+  Shield,
+  Sparkles,
+  Target,
+  TrendingUp,
+  Zap,
+} from "lucide-react";
+import { useCallback, useState } from "react";
 
 interface SchemaOptimizationPanelProps {
   optimizationResult?: SchemaOptimizationResult;
@@ -477,12 +477,12 @@ export function SchemaOptimizationPanel({
 
               {onExportOptimized && (
                 <Button
-                  variant="outline"
+                  variant="default"
                   onClick={onExportOptimized}
                   className="gap-2"
                 >
-                  <Download className="h-4 w-4" />
-                  Export
+                  Proceed
+                  <ArrowRightIcon className="size-4" />
                 </Button>
               )}
             </div>
@@ -554,7 +554,6 @@ export function SchemaOptimizationPanel({
               </Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger value="refine">Refine</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">
@@ -579,9 +578,12 @@ export function SchemaOptimizationPanel({
                             key={index}
                             className="flex items-center gap-2 text-sm"
                           >
-                            <Database className="h-4 w-4 text-muted-foreground" />
+                            <Database className="size-4 text-primary" />
                             <span>{table.name}</span>
-                            <Badge variant="outline">
+                            <Badge
+                              variant="outline"
+                              className="bg-primary/10 text-primary"
+                            >
                               {table.columns.length} columns
                             </Badge>
                           </div>
@@ -590,13 +592,56 @@ export function SchemaOptimizationPanel({
                     </div>
 
                     <div>
-                      <h4 className="font-medium text-sm mb-2">Key Features</h4>
-                      <ul className="space-y-1 text-sm text-muted-foreground">
-                        <li>• UUID primary keys</li>
-                        <li>• Audit timestamps</li>
-                        <li>• Performance indexes</li>
-                        <li>• Data validation constraints</li>
-                      </ul>
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="text-base">
+                            Refine Schema with AI
+                          </CardTitle>
+                          <p className="text-sm text-muted-foreground">
+                            Describe any changes you&apos;d like to make to the
+                            schema, and AI will help refine it.
+                          </p>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="space-y-4">
+                            <textarea
+                              className="w-full p-3 border rounded-lg resize-none"
+                              rows={4}
+                              placeholder="E.g., 'Add a user roles system', 'Make email addresses case-insensitive', 'Add soft delete functionality'..."
+                              value={refinementFeedback}
+                              onChange={(e) =>
+                                setRefinementFeedback(e.target.value)
+                              }
+                            />
+
+                            <div className="flex justify-between items-center">
+                              <p className="text-xs text-muted-foreground">
+                                💡 Be specific about your requirements for best
+                                results
+                              </p>
+                              <Button
+                                onClick={() => {
+                                  onRefineSchema?.(refinementFeedback);
+                                  setRefinementFeedback("");
+                                }}
+                                disabled={!refinementFeedback.trim()}
+                                className="gap-2"
+                              >
+                                <Brain className="h-4 w-4" />
+                                Refine Schema
+                              </Button>
+                            </div>
+
+                            <Alert>
+                              <Info className="h-4 w-4" />
+                              <AlertDescription>
+                                AI refinement will analyze your feedback and
+                                suggest specific changes to improve the schema.
+                              </AlertDescription>
+                            </Alert>
+                          </div>
+                        </CardContent>
+                      </Card>
                     </div>
                   </div>
                 </div>
@@ -604,23 +649,26 @@ export function SchemaOptimizationPanel({
             </Card>
 
             {/* Top Priority Suggestions */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  Top Priority Suggestions
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {suggestions
-                    .filter(
-                      (s) => s.priority === "critical" || s.priority === "high"
-                    )
-                    .slice(0, 3)
-                    .map(renderSuggestionCard)}
-                </div>
-              </CardContent>
-            </Card>
+            {suggestions.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">
+                    Top Priority Suggestions
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {suggestions
+                      .filter(
+                        (s) =>
+                          s.priority === "critical" || s.priority === "high"
+                      )
+                      .slice(0, 3)
+                      .map(renderSuggestionCard)}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </div>
         </TabsContent>
 
@@ -690,54 +738,6 @@ export function SchemaOptimizationPanel({
                 </Card>
               )}
           </div>
-        </TabsContent>
-
-        <TabsContent value="refine">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Refine Schema with AI</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Describe what you&apos;d like to change about the schema, and AI
-                will help refine it.
-              </p>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <textarea
-                  className="w-full p-3 border rounded-lg resize-none"
-                  rows={4}
-                  placeholder="E.g., 'Add a user roles system', 'Make email addresses case-insensitive', 'Add soft delete functionality'..."
-                  value={refinementFeedback}
-                  onChange={(e) => setRefinementFeedback(e.target.value)}
-                />
-
-                <div className="flex justify-between items-center">
-                  <p className="text-xs text-muted-foreground">
-                    💡 Be specific about your requirements for best results
-                  </p>
-                  <Button
-                    onClick={() => {
-                      onRefineSchema?.(refinementFeedback);
-                      setRefinementFeedback("");
-                    }}
-                    disabled={!refinementFeedback.trim()}
-                    className="gap-2"
-                  >
-                    <Brain className="h-4 w-4" />
-                    Refine Schema
-                  </Button>
-                </div>
-
-                <Alert>
-                  <Info className="h-4 w-4" />
-                  <AlertDescription>
-                    AI refinement will analyze your feedback and suggest
-                    specific changes to improve the schema.
-                  </AlertDescription>
-                </Alert>
-              </div>
-            </CardContent>
-          </Card>
         </TabsContent>
       </Tabs>
     </div>

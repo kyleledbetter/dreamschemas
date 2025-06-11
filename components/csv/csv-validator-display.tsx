@@ -362,7 +362,7 @@ export function CSVValidatorDisplay({
                 onOpenChange={() => toggleSection("columns")}
               >
                 <CollapsibleTrigger asChild>
-                  <CardHeader className="cursor-pointer hover:bg-muted/50">
+                  <CardHeader className="cursor-pointer hover:bg-muted/50 py-3">
                     <CardTitle className="text-base flex items-center justify-between">
                       Column Details ({metadata.headers.length})
                       <Button variant="ghost" size="sm">
@@ -376,7 +376,7 @@ export function CSVValidatorDisplay({
                   </CardHeader>
                 </CollapsibleTrigger>
                 <CollapsibleContent>
-                  <CardContent className="pt-0">
+                  <CardContent className="pt-2">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                       {metadata.headers.map((header, index) => (
                         <div
@@ -402,7 +402,7 @@ export function CSVValidatorDisplay({
                 onOpenChange={() => toggleSection("preview")}
               >
                 <CollapsibleTrigger asChild>
-                  <CardHeader className="cursor-pointer hover:bg-muted/50">
+                  <CardHeader className="cursor-pointer hover:bg-muted/50 py-3">
                     <CardTitle className="text-base flex items-center justify-between">
                       Data Preview (First 10 rows)
                       <Button variant="ghost" size="sm">
@@ -416,7 +416,7 @@ export function CSVValidatorDisplay({
                   </CardHeader>
                 </CollapsibleTrigger>
                 <CollapsibleContent>
-                  <CardContent className="pt-0">
+                  <CardContent className="pt-2">
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs border-collapse">
                         <thead>
