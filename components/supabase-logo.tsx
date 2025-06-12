@@ -100,3 +100,74 @@ export function SupabaseLogo() {
     </svg>
   );
 }
+
+export function SupabaseLogoMark() {
+  return (
+    <svg
+      aria-label="Supabase logo"
+      width="30"
+      height="30"
+      viewBox="0 0 23 23"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <g clipPath="url(#clip0_4671_51136)">
+        <g clipPath="url(#clip1_4671_51136)">
+          <path
+            d="M13.4028 21.8652C12.8424 22.5629 11.7063 22.1806 11.6928 21.2898L11.4954 8.25948H20.3564C21.9614 8.25948 22.8565 10.0924 21.8585 11.3353L13.4028 21.8652Z"
+            fill="url(#paint0_linear_4671_51136)"
+          />
+          <path
+            d="M13.4028 21.8652C12.8424 22.5629 11.7063 22.1806 11.6928 21.2898L11.4954 8.25948H20.3564C21.9614 8.25948 22.8565 10.0924 21.8585 11.3353L13.4028 21.8652Z"
+            fill="url(#paint1_linear_4671_51136)"
+            fillOpacity="0.2"
+          />
+          <path
+            d="M9.79895 0.89838C10.3593 0.200591 11.4954 0.582929 11.5089 1.47383L11.5955 14.5041H2.84528C1.24026 14.5041 0.345103 12.6711 1.34316 11.4283L9.79895 0.89838Z"
+            fill="#3ECF8E"
+          />
+        </g>
+      </g>
+      <defs>
+        <linearGradient
+          id="paint0_linear_4671_51136"
+          x1="11.4954"
+          y1="11.1486"
+          x2="19.3439"
+          y2="14.4777"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop stopColor="#249361" />
+          <stop offset="1" stopColor="#3ECF8E" />
+        </linearGradient>
+        <linearGradient
+          id="paint1_linear_4671_51136"
+          x1="8.00382"
+          y1="6.42177"
+          x2="11.5325"
+          y2="13.1398"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop />
+          <stop offset="1" stopOpacity="0" />
+        </linearGradient>
+        <clipPath id="clip0_4671_51136">
+          <rect
+            width="113.85"
+            height="21.8943"
+            fill="currentColor"
+            transform="translate(0.922119 0.456161)"
+          />
+        </clipPath>
+        <clipPath id="clip1_4671_51136">
+          <rect
+            width="21.3592"
+            height="21.8943"
+            fill="currentColor"
+            transform="translate(0.919006 0.497101)"
+          />
+        </clipPath>
+      </defs>
+    </svg>
+  );
+}
