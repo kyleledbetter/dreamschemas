@@ -99,6 +99,7 @@ export interface DatabaseSchema {
   version: string;
   createdAt: Date;
   updatedAt: Date;
+  projectId?: string;
 }
 
 export interface SchemaValidationError {

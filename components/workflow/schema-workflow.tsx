@@ -34,6 +34,7 @@ import { FeedbackManager } from "@/components/feedback/feedback-manager";
 import { VisualSchemaEditor } from "@/components/schema/visual-schema-editor";
 import { MigrationDeployer } from "@/components/supabase/migration-deployer";
 import { ProjectSelector } from "@/components/supabase/project-selector";
+import { DataSeedingInterface } from "@/components/seeding/data-seeding-interface";
 
 // Import types and utilities
 import type { SchemaOptimizationResult } from "@/lib/ai/schema-optimizer";
@@ -53,6 +54,7 @@ import type {
   PostgresType,
   Table,
 } from "@/types/schema.types";
+import { ProjectStorage } from "@/lib/storage/project-storage";
 import { SupabaseLogoMark } from "../supabase-logo";
 
 interface SchemaWorkflowProps {
@@ -65,7 +67,8 @@ type WorkflowStep =
   | "optimize"
   | "design"
   | "export"
-  | "deploy";
+  | "deploy"
+  | "seed";
 
 interface WorkflowState {
   currentStep: WorkflowStep;
@@ -145,21 +148,21 @@ const WORKFLOW_STEPS: Array<{
 }> = [
   {
     id: "upload",
-    title: "Upload CSV Files",
+    title: "Upload CSVs",
     description: "Upload and validate your CSV data files",
     icon: Upload,
     estimatedTime: "2-3 min",
   },
   {
     id: "analyze",
-    title: "AI Analysis",
+    title: "Analysis",
     description: "AI analyzes your data to generate optimal schema",
     icon: Brain,
     estimatedTime: "3-5 min",
   },
   {
     id: "optimize",
-    title: "Optimize Schema",
+    title: "Review",
     description: "Review and apply AI optimization suggestions",
     icon: Sparkles,
     estimatedTime: "5-10 min",
@@ -184,6 +187,13 @@ const WORKFLOW_STEPS: Array<{
     description: "Deploy your schema to Supabase project",
     icon: SupabaseLogoMark,
     estimatedTime: "3-5 min",
+  },
+  {
+    id: "seed",
+    title: "Seed Data",
+    description: "Upload CSV files to populate your tables",
+    icon: Upload,
+    estimatedTime: "5-15 min",
   },
 ];
 
@@ -254,6 +264,22 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
 
   const [showWelcome, setShowWelcome] = useState(true);
 
+  // Calculate overall progress
+  const overallProgress =
+    (state.completedSteps.size / WORKFLOW_STEPS.length) * 100;
+
+  const updateState = useCallback((updates: Partial<WorkflowState>) => {
+    setState((prev) => ({ ...prev, ...updates }));
+  }, []);
+
+  // Load project data from localStorage on mount
+  useEffect(() => {
+    const projectData = ProjectStorage.retrieve();
+    if (projectData) {
+      updateState({ projectData });
+    }
+  }, [updateState]);
+
   // Add OAuth state management
   const [oauthState, setOauthState] = useState<OAuthState>({
     isConnected: false,
@@ -267,14 +293,6 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
   }, []);
 
   const oauth = getSupabaseOAuth();
-
-  // Calculate overall progress
-  const overallProgress =
-    (state.completedSteps.size / WORKFLOW_STEPS.length) * 100;
-
-  const updateState = useCallback((updates: Partial<WorkflowState>) => {
-    setState((prev) => ({ ...prev, ...updates }));
-  }, []);
 
   const markStepComplete = useCallback((step: WorkflowStep) => {
     setState((prev) => ({
@@ -693,13 +711,16 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
   // Handle deployment completion
   const handleDeployComplete = useCallback(
     (result: DeploymentResult) => {
-      updateState({
-        projectData: {
-          projectId: result.projectId || "",
-          projectName: result.projectName || "",
-          dbUrl: result.dbUrl || "",
-        },
-      });
+      const projectData = {
+        projectId: result.projectId || "",
+        projectName: result.projectName || "",
+        dbUrl: result.dbUrl || "",
+      };
+
+      // Store project data in localStorage for persistence
+      ProjectStorage.store(projectData);
+
+      updateState({ projectData });
       markStepComplete("deploy");
     },
     [updateState, markStepComplete]
@@ -724,6 +745,9 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
 
   // Restart workflow
   const restartWorkflow = useCallback(() => {
+    // Clear project data from localStorage
+    ProjectStorage.clear();
+
     setState({
       currentStep: "upload",
       csvResults: [],
@@ -1550,6 +1574,15 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
 
           {state.currentStep === "deploy" && (
             <div className="space-y-6 grow flex flex-col">
+              {state.completedSteps.has("deploy") && state.projectData && (
+                <div className="flex items-center gap-2 justify-end">
+                  <Button onClick={() => goToStep("seed")} className="gap-2">
+                    <Upload className="h-4 w-4" />
+                    Continue to Data Seeding
+                  </Button>
+                </div>
+              )}
+
               <Card className="grow flex flex-col">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
@@ -1590,6 +1623,43 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
               </Card>
             </div>
           )}
+
+          {state.currentStep === "seed" &&
+            state.generatedSchema &&
+            state.projectData && (
+              <Card className="grow flex flex-col">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Upload className="h-5 w-5" />
+                    Seed Data
+                  </CardTitle>
+                  <p className="text-muted-foreground">
+                    Upload CSV files to populate your database tables with
+                    actual data.
+                  </p>
+                </CardHeader>
+                <CardContent className="grow flex flex-col">
+                  <DataSeedingInterface
+                    schema={state.generatedSchema}
+                    projectId={state.projectData.projectId}
+                    onSeedingComplete={(result) => {
+                      if (result.success) {
+                        console.log(
+                          "Seeding completed successfully:",
+                          result.statistics
+                        );
+                        // Could mark a "seeding complete" state here
+                      }
+                    }}
+                    onSeedingProgress={(progress) => {
+                      console.log("Seeding progress:", progress);
+                      // Could update UI with seeding progress
+                    }}
+                    className="grow"
+                  />
+                </CardContent>
+              </Card>
+            )}
         </div>
       </div>
 
