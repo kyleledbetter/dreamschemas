@@ -79,6 +79,7 @@ class CSVProcessor {
 
   async processCSVData(onProgress?: (progress: SeedingProgress) => void): Promise<SeedingProgress> {
     try {
+      console.log('🚀 UNIVERSAL SEEDING ENGINE v2.0 - Starting with bulletproof NOT NULL handling');
       this.updateProgress(5, "parsing", "Downloading CSV file");
       onProgress?.(this.progress);
       
@@ -224,7 +225,12 @@ class CSVProcessor {
 
   private async insertDataIntoTables(data: any[], onProgress?: (progress: SeedingProgress) => void): Promise<void> {
     const schema = this.request.schema;
-    const batchSize = this.request.configuration?.batchSize || 100;
+    const batchSize = Math.min(this.request.configuration?.batchSize || 100, 50); // Limit batch size for large files
+    
+    // Memory management for large files
+    if (data.length > 1000) {
+      console.log('🚨 Large file detected (' + data.length + ' rows). Using memory-optimized processing.');
+    }
     
     // Process each table in the schema
     console.log('Schema tables:', schema.tables?.map(t => t.name) || []);
@@ -253,9 +259,11 @@ class CSVProcessor {
         );
       onProgress?.(this.progress);
       
-      // Map CSV data to table structure
-      const tableData = this.mapDataToTable(data, table);
-      console.log('Mapped', tableData.length, 'rows for table', table.name);
+      // Filter and map CSV data to table structure
+      const relevantData = this.filterDataForTable(data, table);
+      const tableData = this.mapDataToTable(relevantData, table);
+      console.log('📊 Filtered', relevantData.length, 'relevant rows from', data.length, 'total rows for table', table.name);
+      console.log('🗂️ Mapped', tableData.length, 'rows for table', table.name);
       if (tableData.length > 0) {
         console.log('Sample mapped row:', JSON.stringify(tableData[0], null, 2));
       }
@@ -271,16 +279,8 @@ class CSVProcessor {
         let actualRowCount = batches[batchIndex].length;
         
         try {
-          // Determine if this table likely contains lookup/reference data
-          const isLookupTable = table.name.includes('lookup_') || 
-                               table.name.includes('_types') || 
-                               table.name.includes('_categories') || 
-                               table.name.includes('_statuses') ||
-                               table.name.includes('_codes') ||
-                               table.name.includes('_fips') ||
-                               table.name.endsWith('_subtypes') ||
-                               table.name.endsWith('_topographies') ||
-                               table.columns?.some(col => col.name === 'type' || col.name === 'name' || col.name === 'subtype' || col.name === 'code');
+          // UNIVERSAL lookup table detection - works for ANY schema
+          const isLookupTable = this.isLookupTable(table);
           
           let insertResult;
           let actualBatch = batches[batchIndex];
@@ -289,11 +289,8 @@ class CSVProcessor {
             // For lookup tables, deduplicate the batch first, then use upsert
             console.log('Processing lookup table:', table.name);
             
-            // Deduplicate within this batch
-            const uniqueBatch = batches[batchIndex].filter((row, index, arr) => {
-              const uniqueField = row.type || row.subtype || row.style || row.status || row.name || row.code;
-              return arr.findIndex(r => (r.type || r.subtype || r.style || r.status || r.name || r.code) === uniqueField) === index;
-            });
+            // UNIVERSAL deduplication - finds the best unique field dynamically
+            const uniqueBatch = this.deduplicateBatch(batches[batchIndex], table);
             
             console.log('Deduplicated batch for', table.name + ':', uniqueBatch.length, 'unique rows from', batches[batchIndex].length);
             
@@ -416,39 +413,267 @@ class CSVProcessor {
     }
   }
 
+  private filterDataForTable(data: any[], table: any): any[] {
+    // INTELLIGENT table-specific data filtering with null safety
+    if (!data || !Array.isArray(data) || data.length === 0) {
+      console.log('⚠️ No data provided for table', table?.name || 'unknown');
+      return [];
+    }
+    
+    if (!table || !table.name) {
+      console.log('⚠️ Invalid table provided for filtering');
+      return [];
+    }
+    
+    try {
+      const tableName = table.name.toLowerCase();
+      
+      // For lookup tables, we need to extract unique values from relevant columns
+      if (this.isLookupTable(table)) {
+        return this.extractLookupData(data, table);
+      }
+      
+      // For main entity tables, filter based on table purpose
+      if (tableName.includes('properties') || tableName.includes('property')) {
+      // Properties table: only rows that have property-related data
+      return data.filter(row => {
+        return this.hasPropertyData(row);
+      });
+    }
+    
+    if (tableName.includes('permits') || tableName.includes('permit')) {
+      // Permits table: only rows that have permit-related data OR property data (since permits are linked to properties)
+      return data.filter(row => {
+        return this.hasPermitData(row) || this.hasPropertyData(row);
+      });
+    }
+    
+    if (tableName.includes('assessment') || tableName.includes('characteristic')) {
+      // Assessment/characteristics: only rows with assessment data OR property data
+      return data.filter(row => {
+        return this.hasAssessmentData(row) || this.hasPropertyData(row);
+      });
+    }
+    
+      // For other tables, be more inclusive - return all data (they'll be filtered during mapping)
+      console.log('📋 Using all data for table', tableName, '- will filter during mapping');
+      return data;
+    } catch (error) {
+      console.error('❌ Error in filterDataForTable for table', table?.name || 'unknown', ':', error);
+      return [];
+    }
+  }
+
+  private extractLookupData(data: any[], table: any): any[] {
+    try {
+      // Extract unique values for lookup tables from relevant CSV columns
+      if (!data || !Array.isArray(data) || data.length === 0) {
+        console.log('⚠️ No data to extract for lookup table', table?.name || 'unknown');
+        return [];
+      }
+      
+      const tableName = table.name.toLowerCase();
+      const uniqueValues = new Set<string>();
+      
+      // Find the most relevant CSV columns for this lookup table
+      const relevantColumns = this.findRelevantColumnsForLookupTable(data, tableName);
+      
+      console.log('🔍 Extracting lookup data for', table.name, 'from columns:', relevantColumns);
+      
+      // Extract unique values from relevant columns with null safety
+      data.forEach((row, index) => {
+        try {
+          if (!row || typeof row !== 'object') {
+            console.log('⚠️ Skipping invalid row', index, 'in lookup extraction');
+            return;
+          }
+          
+          relevantColumns.forEach(colName => {
+            try {
+              const value = row[colName];
+              if (value !== null && value !== undefined && value.toString().trim() !== '') {
+                uniqueValues.add(value.toString().trim());
+              }
+            } catch (colError) {
+              console.log('⚠️ Error processing column', colName, 'in row', index, ':', colError);
+            }
+          });
+        } catch (rowError) {
+          console.log('⚠️ Error processing row', index, 'in lookup extraction:', rowError);
+        }
+      });
+      
+      // Convert unique values to row objects
+      const lookupRows = Array.from(uniqueValues).map(value => ({
+        _lookupValue: value
+      }));
+      
+      console.log('📋 Extracted', lookupRows.length, 'unique values for lookup table', table.name);
+      return lookupRows;
+    } catch (error) {
+      console.error('❌ Error in extractLookupData for table', table?.name || 'unknown', ':', error);
+      return [];
+    }
+  }
+
+  private findRelevantColumnsForLookupTable(data: any[], tableName: string): string[] {
+    if (data.length === 0) return [];
+    
+    const csvColumns = Object.keys(data[0]);
+    const relevantColumns: string[] = [];
+    
+    // Match CSV columns to lookup table types
+    if (tableName.includes('jurisdiction')) {
+      relevantColumns.push(...csvColumns.filter(col => 
+        col.toLowerCase().includes('jurisdiction') || 
+        col.toLowerCase().includes('county') || 
+        col.toLowerCase().includes('city')
+      ));
+    } else if (tableName.includes('builder')) {
+      relevantColumns.push(...csvColumns.filter(col => 
+        col.toLowerCase().includes('builder') || 
+        col.toLowerCase().includes('contractor')
+      ));
+    } else if (tableName.includes('permit_type')) {
+      relevantColumns.push(...csvColumns.filter(col => 
+        col.toLowerCase().includes('permit') && col.toLowerCase().includes('type')
+      ));
+    } else if (tableName.includes('business')) {
+      relevantColumns.push(...csvColumns.filter(col => 
+        col.toLowerCase().includes('business') || 
+        col.toLowerCase().includes('company')
+      ));
+    }
+    
+    // If no specific columns found, look for generic name/type columns
+    if (relevantColumns.length === 0) {
+      relevantColumns.push(...csvColumns.filter(col => 
+        col.toLowerCase().includes('name') || 
+        col.toLowerCase().includes('type') ||
+        col.toLowerCase().includes('status')
+      ));
+    }
+    
+    return relevantColumns;
+  }
+
+  private hasPropertyData(row: any): boolean {
+    // Check if row has property-related data
+    const keys = Object.keys(row).map(k => k.toLowerCase());
+    return keys.some(key => 
+      key.includes('address') || 
+      key.includes('street') || 
+      key.includes('parcel') || 
+      key.includes('property') ||
+      key.includes('latitude') ||
+      key.includes('longitude')
+    );
+  }
+
+  private hasPermitData(row: any): boolean {
+    // Check if row has permit-related data
+    const keys = Object.keys(row).map(k => k.toLowerCase());
+    return keys.some(key => 
+      key.includes('permit') || 
+      key.includes('application') ||
+      key.includes('issued') ||
+      key.includes('approved')
+    );
+  }
+
+  private hasAssessmentData(row: any): boolean {
+    // Check if row has assessment/characteristics data
+    const keys = Object.keys(row).map(k => k.toLowerCase());
+    return keys.some(key => 
+      key.includes('assessment') || 
+      key.includes('value') ||
+      key.includes('sqft') ||
+      key.includes('square') ||
+      key.includes('bedroom') ||
+      key.includes('bathroom') ||
+      key.includes('year')
+    );
+  }
+
   private mapDataToTable(data: any[], table: any): any[] {
-    // Get all CSV column names for better matching
-    const csvColumns = data.length > 0 ? Object.keys(data[0]) : [];
-    console.log('CSV columns for table', table.name + ':', csvColumns);
-    console.log('Table columns:', table.columns?.map(c => c.name) || []);
+    try {
+      // Null safety checks
+      if (!data || !Array.isArray(data) || data.length === 0) {
+        console.log('⚠️ No data to map for table', table?.name || 'unknown');
+        return [];
+      }
+      
+      if (!table || !table.name || !table.columns) {
+        console.log('⚠️ Invalid table structure for mapping');
+        return [];
+      }
+      
+      // Get all CSV column names for better matching
+      const csvColumns = data.length > 0 && data[0] ? Object.keys(data[0]) : [];
+      console.log('🔍 MAPPING DEBUG for table', table.name);
+      console.log('📊 CSV columns available:', csvColumns);
+      console.log('🏗️ Table columns expected:', table.columns?.map(c => c.name + ' (' + c.type + (c.notNull ? ', NOT NULL' : '') + ')') || []);
+      console.log('📝 Sample CSV row:', data[0] ? Object.keys(data[0]).slice(0, 5).reduce((obj, key) => { obj[key] = data[0][key]; return obj; }, {}) : 'No data');
+    } catch (error) {
+      console.error('❌ Error in mapDataToTable setup for table', table?.name || 'unknown', ':', error);
+      return [];
+    }
     
          // Filter out rows that don't have any relevant data for this table
-    return data.map(row => {
-      const mappedRow: any = {};
-      let hasRelevantData = false;
-      let shouldSkipRow = false;
-      
-      table.columns.forEach((column: any) => {
+    return data.map((row, rowIndex) => {
+      try {
+        if (!row || typeof row !== 'object') {
+          console.log('⚠️ Skipping invalid row', rowIndex, 'for table', table.name);
+          return null;
+        }
+        
+        const mappedRow: any = {};
+        let hasRelevantData = false;
+        let shouldSkipRow = false;
+        
+        table.columns.forEach((column: any) => {
+          try {
+            if (!column || !column.name) {
+              console.log('⚠️ Skipping invalid column in table', table.name);
+              return;
+            }
         let csvValue = null;
         
-        // Try multiple strategies to find the right CSV column
-        const possibleMatches = [
-          row[column.name], // Exact match
-          row[column.name.toLowerCase()], // Lowercase
-          row[column.name.toUpperCase()], // Uppercase
-          // Try with underscores
-          row[column.name.replace(/-/g, '_')],
-          row[column.name.replace(/_/g, '-')],
-          // Try without underscores/dashes
-          row[column.name.replace(/[-_]/g, '')],
-          // Try specific field mappings
-          this.getMappedValue(row, column.name),
-        ];
+        // Special handling for lookup tables with extracted values
+        if (row._lookupValue && (column.name === 'name' || column.name.includes('name'))) {
+          csvValue = row._lookupValue;
+          console.log('🏷️ Using extracted lookup value for', column.name + ':', csvValue);
+        } else {
+          // AGGRESSIVE column matching - try every possible variation
+          const possibleMatches = [
+            row[column.name], // Exact match
+            row[column.name.toLowerCase()], // Lowercase
+            row[column.name.toUpperCase()], // Uppercase
+            // Try with underscores
+            row[column.name.replace(/-/g, '_')],
+            row[column.name.replace(/_/g, '-')],
+            // Try without underscores/dashes
+            row[column.name.replace(/[-_]/g, '')],
+            // Try uppercase without separators
+            row[column.name.replace(/[-_]/g, '').toUpperCase()],
+            // Try specific field mappings
+            this.getMappedValue(row, column.name),
+            // Try semantic matching (find CSV columns that contain the target column name)
+            ...this.findSemanticMatches(row, column.name),
+          ];
+          
+          // Find the first non-null, non-empty value
+          csvValue = possibleMatches.find(val => 
+            val !== null && val !== undefined && val !== ''
+          );
+        }
         
-        // Find the first non-null, non-empty value
-        csvValue = possibleMatches.find(val => 
-          val !== null && val !== undefined && val !== ''
-        );
+        // Debug column mapping
+        if (column.notNull && column.name.endsWith('_id')) {
+          console.log('🔑 Foreign key column', column.name, 'for table', table.name + ':');
+          console.log('   - CSV value found:', csvValue);
+          console.log('   - Possible matches tried:', possibleMatches.map((val, i) => \`\${['exact', 'lower', 'upper', 'dash->underscore', 'underscore->dash', 'no-separators', 'mapped'][i]}: \${val}\`));
+        }
         
         // For boolean columns, do extra validation
         if (csvValue && column.type === 'boolean') {
@@ -478,36 +703,57 @@ class CSVProcessor {
           
           // UNIVERSAL type conversion - handles ANY data type safely
           mappedRow[column.name] = this.convertValueForColumn(csvValue, column, table.name);
-        } else if (column.defaultValue) {
-          // Use default value if specified
-          mappedRow[column.name] = column.defaultValue;
-        } else if (column.name === 'id') {
-          // Always generate ID if missing
-          mappedRow[column.name] = crypto.randomUUID();
-                 } else if (column.name === 'created_at' || column.name === 'updated_at') {
-           // Auto-generate timestamps
-           mappedRow[column.name] = new Date().toISOString();
-         } else if (column.notNull && column.name.endsWith('_id')) {
-           // CRITICAL: Handle NOT NULL foreign keys that weren't resolved above
-           mappedRow[column.name] = crypto.randomUUID();
-           console.log('🔑 Generated required foreign key for', column.name + ':', mappedRow[column.name]);
-         } else if (column.notNull && !column.name.endsWith('_id')) {
-           // UNIVERSAL smart defaults for ANY schema
-           const defaultValue = this.getSmartDefault(column);
-           if (defaultValue !== null) {
-             mappedRow[column.name] = defaultValue;
-             console.log('Using smart default for required field', column.name + ':', defaultValue);
-           }
+        } else {
+          // CRITICAL: EVERY column must get a value if it's NOT NULL
+          // This is the bulletproof approach that works for ANY schema
+          
+          if (column.defaultValue) {
+            // Use default value if specified
+            mappedRow[column.name] = column.defaultValue;
+          } else if (column.name === 'id') {
+            // Always generate ID if missing
+            mappedRow[column.name] = crypto.randomUUID();
+          } else if (column.name === 'created_at' || column.name === 'updated_at') {
+            // Auto-generate timestamps
+            mappedRow[column.name] = new Date().toISOString();
+                     } else if (column.notNull) {
+             // UNIVERSAL: Handle ANY NOT NULL column regardless of name or type
+             console.log('🚨 NOT NULL column', column.name, 'has no CSV data - generating default');
+             if (column.name.endsWith('_id')) {
+               // Foreign key - generate UUID
+               mappedRow[column.name] = crypto.randomUUID();
+               console.log('🔑 Generated required foreign key for', column.name + ':', mappedRow[column.name]);
+             } else {
+               // Any other NOT NULL field - use smart default
+               const defaultValue = this.getSmartDefault(column, table.name);
+               if (defaultValue !== null) {
+                 mappedRow[column.name] = defaultValue;
+                 console.log('📝 Generated smart default for required field', column.name + ':', defaultValue);
+               } else {
+                 // Fallback: generate a safe default based on type
+                 mappedRow[column.name] = this.getTypeBasedDefault(column);
+                 console.log('⚠️ Generated type-based fallback for', column.name + ':', mappedRow[column.name]);
+               }
+             }
+                      }
+           // For nullable columns without data, we simply don't include them (they'll be NULL)
          }
-             });
+          } catch (columnError) {
+            console.log('⚠️ Error processing column', column?.name || 'unknown', 'in row', rowIndex, ':', columnError);
+          }
+        });
        
-       // Skip rows that are missing required foreign keys or have no relevant data
-       if (shouldSkipRow || !hasRelevantData) {
-         return null;
-       }
-       
-       return mappedRow;
-     }).filter(row => row !== null); // Remove null rows
+        // Skip rows that are missing required foreign keys or have no relevant data
+        if (shouldSkipRow || !hasRelevantData) {
+          return null;
+        }
+        
+        return mappedRow;
+      } catch (rowError) {
+        console.error('❌ Error processing row', rowIndex, 'for table', table.name, ':', rowError);
+        return null;
+      }
+    }).filter(row => row !== null); // Remove null rows
   }
 
   private async preCreateDependentRecords(data: any[]): Promise<void> {
@@ -524,18 +770,29 @@ class CSVProcessor {
       table.columns?.forEach((column: any) => {
         if (column.name.endsWith('_id') && column.notNull) {
           const baseName = column.name.replace(/_id$/, '');
+          console.log('🔍 Looking for related table for foreign key:', column.name, 'base name:', baseName);
+          
           // Try to find a table that matches this foreign key
-          const relatedTable = schema.tables.find((t: any) => 
-            t.name === baseName || 
-            t.name === baseName + 's' || 
-            t.name.includes(baseName)
-          );
+          const relatedTable = schema.tables.find((t: any) => {
+            const matches = t.name === baseName || 
+                           t.name === baseName + 's' || 
+                           t.name === baseName + 'es' ||
+                           t.name.includes(baseName) ||
+                           baseName.includes(t.name.replace(/s$/, ''));
+            
+            if (matches) {
+              console.log('✅ Found related table:', t.name, 'for foreign key:', column.name);
+            }
+            return matches;
+          });
           
           if (relatedTable) {
             foreignKeys.set(column.name, relatedTable.name);
             if (!dependencyRecords.has(relatedTable.name)) {
               dependencyRecords.set(relatedTable.name, new Map<string, any>());
             }
+          } else {
+            console.log('❌ No related table found for foreign key:', column.name);
           }
         }
       });
@@ -543,16 +800,39 @@ class CSVProcessor {
     
     console.log('Found foreign key relationships:', Array.from(foreignKeys.entries()));
     
-    // Extract unique records for each dependency table
+    // Extract unique records for each dependency table with SMART data extraction
     data.forEach(row => {
       foreignKeys.forEach((tableName, foreignKeyColumn) => {
         const baseName = foreignKeyColumn.replace(/_id$/, '');
         
-        // Try to find data that could represent this entity
-        const entityValue = this.findValueInRow(row, baseName) || 
-                            this.findValueInRow(row, 'name') || 
-                            this.findValueInRow(row, 'code') ||
-                            Object.values(row).find(v => v && v.toString().trim() !== '');
+        // SMART entity value extraction based on table type
+        let entityValue = null;
+        
+        // Try to find the most relevant CSV column for this specific table type
+        if (tableName.includes('jurisdiction')) {
+          entityValue = this.findValueInRow(row, 'jurisdiction') || 
+                       this.findValueInRow(row, 'county') || 
+                       this.findValueInRow(row, 'city');
+        } else if (tableName.includes('builder')) {
+          entityValue = this.findValueInRow(row, 'builder') || 
+                       this.findValueInRow(row, 'contractor');
+        } else if (tableName.includes('permit_type')) {
+          entityValue = this.findValueInRow(row, 'permit_type') || 
+                       this.findValueInRow(row, 'type');
+        } else if (tableName.includes('business')) {
+          entityValue = this.findValueInRow(row, 'business') || 
+                       this.findValueInRow(row, 'company');
+        } else {
+          // Fallback: try to find data that could represent this entity
+          entityValue = this.findValueInRow(row, baseName) || 
+                       this.findValueInRow(row, 'name') || 
+                       this.findValueInRow(row, 'code');
+        }
+        
+        // If no specific data found, generate a table-specific default
+        if (!entityValue) {
+          entityValue = this.getTableSpecificDefault(tableName);
+        }
         
         if (entityValue) {
           const recordsMap = dependencyRecords.get(tableName);
@@ -561,6 +841,8 @@ class CSVProcessor {
           if (recordsMap && !recordsMap.has(key)) {
             const hash = this.hashString(baseName + '_' + key);
             const recordId = this.uuidFromHash(hash);
+            
+            console.log('🏗️ Creating dependency record for table', tableName + ':', key);
             
             // Create a basic record structure
             const record: any = {
@@ -579,7 +861,7 @@ class CSVProcessor {
                   } else if (col.name === 'code' || col.name.includes('code')) {
                     record[col.name] = key;
                   } else if (col.notNull && !col.name.endsWith('_id')) {
-                    record[col.name] = this.getSmartDefault(col);
+                    record[col.name] = this.getSmartDefault(col, tableName);
                   }
                 }
               });
@@ -769,11 +1051,12 @@ class CSVProcessor {
     return null;
   }
 
-  private getSmartDefault(column: any): any {
+  private getSmartDefault(column: any, tableName?: string): any {
     // UNIVERSAL smart defaults based on column name patterns and types
     
     const columnName = column.name.toLowerCase();
     const columnType = (column.type || '').toLowerCase();
+    const tableContext = tableName ? tableName.toLowerCase() : '';
     
     // Handle by type first
     if (columnType.includes('bool')) {
@@ -815,10 +1098,35 @@ class CSVProcessor {
         return maxLength && defaultVal.length > maxLength ? defaultVal.substring(0, maxLength) : defaultVal;
       }
       
-      // Name fields
+      // Name fields - make them table-specific to avoid duplicates
       if (columnName.includes('name') || columnName.includes('title') || 
           columnName.includes('label')) {
         let defaultVal = 'Unknown';
+        
+        // Make the default specific to the table type to avoid duplicate key violations
+        if (tableContext.includes('permit_types')) {
+          defaultVal = 'General Permit';
+        } else if (tableContext.includes('permit_statuses')) {
+          defaultVal = 'Pending';
+        } else if (tableContext.includes('businesses')) {
+          defaultVal = 'Unknown Business';
+        } else if (tableContext.includes('builders')) {
+          defaultVal = 'Unknown Builder';
+        } else if (tableContext.includes('jurisdictions')) {
+          defaultVal = 'Unknown Jurisdiction';
+        } else if (tableContext.includes('product_types')) {
+          defaultVal = 'General Product';
+        } else if (tableContext.includes('product_classes')) {
+          defaultVal = 'Standard Class';
+        } else if (tableContext.includes('loan_types')) {
+          defaultVal = 'Standard Loan';
+        } else if (tableContext.includes('sale_statuses')) {
+          defaultVal = 'Active';
+        } else {
+          // Add a random suffix to prevent duplicates
+          defaultVal = 'Unknown-' + crypto.randomUUID().substring(0, 8);
+        }
+        
         return maxLength && defaultVal.length > maxLength ? defaultVal.substring(0, maxLength) : defaultVal;
       }
       
@@ -872,6 +1180,179 @@ class CSVProcessor {
     }
     
     return null; // Let database handle anything else
+  }
+
+  private getTypeBasedDefault(column: any): any {
+    // ULTIMATE fallback - generates a safe default for ANY PostgreSQL type
+    const columnType = (column.type || '').toLowerCase();
+    
+    if (columnType.includes('bool')) {
+      return false;
+    }
+    
+    if (columnType.includes('int') || columnType.includes('numeric') || 
+        columnType.includes('decimal') || columnType.includes('real') || 
+        columnType.includes('double') || columnType.includes('float')) {
+      return 0;
+    }
+    
+    if (columnType.includes('date') || columnType.includes('time')) {
+      return new Date().toISOString();
+    }
+    
+    if (columnType.includes('uuid')) {
+      return crypto.randomUUID();
+    }
+    
+    // For text/varchar/char - respect length constraints
+    const maxLength = this.getColumnMaxLength(column);
+    let defaultText = 'AUTO';
+    
+    if (maxLength && defaultText.length > maxLength) {
+      defaultText = defaultText.substring(0, maxLength);
+    }
+    
+    return defaultText;
+  }
+
+  private findSemanticMatches(row: any, targetColumn: string): any[] {
+    // Find CSV columns that semantically match the target column
+    const csvColumns = Object.keys(row);
+    const matches = [];
+    
+    // Clean the target column name for comparison
+    const cleanTarget = targetColumn.replace(/[-_]/g, '').toLowerCase();
+    
+    for (const csvCol of csvColumns) {
+      const cleanCsv = csvCol.replace(/[-_]/g, '').toLowerCase();
+      
+      // Check if CSV column contains the target or vice versa
+      if (cleanCsv.includes(cleanTarget) || cleanTarget.includes(cleanCsv)) {
+        matches.push(row[csvCol]);
+      }
+      
+      // Special semantic mappings
+      if (targetColumn === 'street_address' && (csvCol.toLowerCase().includes('street') || csvCol.toLowerCase().includes('address'))) {
+        matches.push(row[csvCol]);
+      }
+      
+      if (targetColumn === 'property_id' && (csvCol.toLowerCase().includes('property') || csvCol.toLowerCase().includes('parcel'))) {
+        matches.push(row[csvCol]);
+      }
+      
+      if (targetColumn === 'permit_id' && csvCol.toLowerCase().includes('permit')) {
+        matches.push(row[csvCol]);
+      }
+    }
+    
+    return matches;
+  }
+
+  private getTableSpecificDefault(tableName: string): string {
+    // Generate table-specific defaults to avoid duplicate key violations
+    const tableType = tableName.toLowerCase();
+    
+    if (tableType.includes('jurisdiction')) {
+      return 'Default Jurisdiction';
+    } else if (tableType.includes('builder')) {
+      return 'Default Builder';
+    } else if (tableType.includes('permit_type')) {
+      return 'General Permit';
+    } else if (tableType.includes('permit_status')) {
+      return 'Pending';
+    } else if (tableType.includes('business')) {
+      return 'Default Business';
+    } else if (tableType.includes('product_type')) {
+      return 'General Product';
+    } else if (tableType.includes('product_class')) {
+      return 'Standard Class';
+    } else if (tableType.includes('loan_type')) {
+      return 'Standard Loan';
+    } else if (tableType.includes('sale_status')) {
+      return 'Active';
+    } else {
+      return 'Default-' + tableName;
+    }
+  }
+
+  private isLookupTable(table: any): boolean {
+    // UNIVERSAL lookup table detection based on schema analysis
+    
+    // 1. Name-based detection (common patterns)
+    const namePatterns = [
+      'lookup_', '_types', '_categories', '_statuses', '_codes', '_fips',
+      '_subtypes', '_topographies', '_classifications', '_enums'
+    ];
+    
+    if (namePatterns.some(pattern => table.name.includes(pattern))) {
+      return true;
+    }
+    
+    // 2. Structure-based detection
+    const columns = table.columns || [];
+    const columnNames = columns.map(col => col.name.toLowerCase());
+    
+    // Has typical lookup table columns
+    const hasLookupColumns = columnNames.some(name => 
+      ['type', 'name', 'code', 'subtype', 'category', 'status', 'classification'].includes(name)
+    );
+    
+    // Small table with mostly text/varchar columns (typical of lookup tables)
+    const textColumns = columns.filter(col => {
+      const type = (col.type || '').toLowerCase();
+      return type.includes('text') || type.includes('varchar') || type.includes('char');
+    });
+    
+    const isSmallTextTable = columns.length <= 6 && textColumns.length >= 2;
+    
+    // 3. Foreign key analysis - lookup tables are often referenced by other tables
+    const hasUniqueConstraints = columns.some(col => 
+      col.name === 'code' || col.name === 'name' || col.name === 'type'
+    );
+    
+    return hasLookupColumns || (isSmallTextTable && hasUniqueConstraints);
+  }
+
+  private deduplicateBatch(batch: any[], table: any): any[] {
+    // UNIVERSAL deduplication - works for ANY lookup table structure
+    
+    if (batch.length === 0) return batch;
+    
+    // Find the best field to deduplicate on
+    const sampleRow = batch[0];
+    const possibleUniqueFields = ['code', 'name', 'type', 'subtype', 'category', 'status', 'classification', 'id'];
+    
+    // Find which field exists and has the most unique values
+    let bestField = null;
+    let maxUniqueCount = 0;
+    
+    for (const field of possibleUniqueFields) {
+      if (sampleRow.hasOwnProperty(field)) {
+        const uniqueValues = new Set(batch.map(row => row[field]).filter(val => val != null));
+        if (uniqueValues.size > maxUniqueCount) {
+          maxUniqueCount = uniqueValues.size;
+          bestField = field;
+        }
+      }
+    }
+    
+    if (!bestField) {
+      console.log('No suitable unique field found for deduplication in table', table.name);
+      return batch; // Return original batch if no unique field found
+    }
+    
+    console.log('Deduplicating table', table.name, 'on field:', bestField);
+    
+    // Deduplicate based on the best field
+    const seen = new Set();
+    return batch.filter(row => {
+      const value = row[bestField];
+      if (value == null || seen.has(value)) {
+        return false;
+      }
+      seen.add(value);
+      return true;
+    });
   }
 
   private convertValueForColumn(value: any, column: any, tableName: string): any {
