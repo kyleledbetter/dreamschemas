@@ -272,12 +272,15 @@ class CSVProcessor {
         
         try {
           // Determine if this table likely contains lookup/reference data
-          const isLookupTable = table.name.includes('_types') || 
+          const isLookupTable = table.name.includes('lookup_') || 
+                               table.name.includes('_types') || 
                                table.name.includes('_categories') || 
                                table.name.includes('_statuses') ||
+                               table.name.includes('_codes') ||
+                               table.name.includes('_fips') ||
                                table.name.endsWith('_subtypes') ||
                                table.name.endsWith('_topographies') ||
-                               table.columns?.some(col => col.name === 'type' || col.name === 'name' || col.name === 'subtype');
+                               table.columns?.some(col => col.name === 'type' || col.name === 'name' || col.name === 'subtype' || col.name === 'code');
           
           let insertResult;
           let actualBatch = batches[batchIndex];
@@ -288,8 +291,8 @@ class CSVProcessor {
             
             // Deduplicate within this batch
             const uniqueBatch = batches[batchIndex].filter((row, index, arr) => {
-              const uniqueField = row.type || row.subtype || row.style || row.status || row.name;
-              return arr.findIndex(r => (r.type || r.subtype || r.style || r.status || r.name) === uniqueField) === index;
+              const uniqueField = row.type || row.subtype || row.style || row.status || row.name || row.code;
+              return arr.findIndex(r => (r.type || r.subtype || r.style || r.status || r.name || r.code) === uniqueField) === index;
             });
             
             console.log('Deduplicated batch for', table.name + ':', uniqueBatch.length, 'unique rows from', batches[batchIndex].length);
@@ -484,6 +487,10 @@ class CSVProcessor {
                  } else if (column.name === 'created_at' || column.name === 'updated_at') {
            // Auto-generate timestamps
            mappedRow[column.name] = new Date().toISOString();
+         } else if (column.notNull && column.name.endsWith('_id')) {
+           // CRITICAL: Handle NOT NULL foreign keys that weren't resolved above
+           mappedRow[column.name] = crypto.randomUUID();
+           console.log('🔑 Generated required foreign key for', column.name + ':', mappedRow[column.name]);
          } else if (column.notNull && !column.name.endsWith('_id')) {
            // UNIVERSAL smart defaults for ANY schema
            const defaultValue = this.getSmartDefault(column);
@@ -492,7 +499,6 @@ class CSVProcessor {
              console.log('Using smart default for required field', column.name + ':', defaultValue);
            }
          }
-         // For NOT NULL foreign keys without values, we already handle above
              });
        
        // Skip rows that are missing required foreign keys or have no relevant data
