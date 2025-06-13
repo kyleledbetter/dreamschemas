@@ -71,11 +71,11 @@ export async function POST(request: NextRequest) {
     }
 
     const apiKeys = await apiKeysResponse.json();
-    const anonKey = apiKeys.find((key: { name: string; api_key: string }) => key.name === "anon")?.api_key;
+    const serviceRoleKey = apiKeys.find((key: { name: string; api_key: string }) => key.name === "service_role")?.api_key;
 
-    if (!anonKey) {
+    if (!serviceRoleKey) {
       return NextResponse.json(
-        { error: "Could not find project anon key" },
+        { error: "Could not find project service role key" },
         { status: 500 }
       );
     }
@@ -83,10 +83,12 @@ export async function POST(request: NextRequest) {
     // Prepare the request payload
     const requestPayload = {
       ...jobData,
+      supabaseUrl: `https://${projectId}.supabase.co`,
+      supabaseServiceKey: serviceRoleKey,
       projectConfig: {
         projectId: projectId,
         databaseUrl: `https://${projectId}.supabase.co`,
-        apiKey: anonKey,
+        apiKey: serviceRoleKey,
       },
     };
 
@@ -95,7 +97,7 @@ export async function POST(request: NextRequest) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${anonKey}`,
+        "Authorization": `Bearer ${serviceRoleKey}`,
       },
       body: JSON.stringify(requestPayload),
     });

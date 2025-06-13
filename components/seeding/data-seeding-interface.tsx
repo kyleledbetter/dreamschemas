@@ -515,7 +515,7 @@ export function DataSeedingInterface({
 
           {/* Debug Info - Development only */}
           {process.env.NODE_ENV === "development" && (
-            <Alert className="mt-4">
+            <Alert className="mt-4 hidden">
               <Info className="h-4 w-4" />
               <AlertDescription>
                 <strong>Debug Info:</strong>

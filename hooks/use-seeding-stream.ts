@@ -102,6 +102,11 @@ export function useSeedingStream(options: SeedingStreamOptions = {}) {
         jobId,
         configuration: job.configuration,
         schema: job.schema,
+        fileUpload: job.fileUpload ? {
+          storagePath: job.fileUpload.storagePath,
+          filename: job.fileUpload.filename,
+          size: job.fileUpload.size,
+        } : undefined,
       };
 
       // Start the seeding job via our API route (streaming)

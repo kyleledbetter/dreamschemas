@@ -18,6 +18,7 @@ import {
   FileText,
   Info,
   Play,
+  Plus,
   RotateCcw,
   Sparkles,
   Upload,
@@ -55,7 +56,7 @@ import type {
   Table,
 } from "@/types/schema.types";
 import { ProjectStorage } from "@/lib/storage/project-storage";
-import { SupabaseLogoMark } from "../supabase-logo";
+import { SupabaseLogoMark, SupabaseLogoMarkRed } from "../supabase-logo";
 
 interface SchemaWorkflowProps {
   user: User;
@@ -263,10 +264,38 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
   });
 
   const [showWelcome, setShowWelcome] = useState(true);
+  const [showCelebration, setShowCelebration] = useState(false);
 
   // Calculate overall progress
   const overallProgress =
     (state.completedSteps.size / WORKFLOW_STEPS.length) * 100;
+
+  // Celebration function
+  const triggerCelebration = useCallback(() => {
+    setShowCelebration(true);
+    // Auto-hide celebration after 5 seconds
+    setTimeout(() => setShowCelebration(false), 5000);
+  }, []);
+
+  // Watch for 100% completion (only trigger once)
+  const [hasTriggeredCelebration, setHasTriggeredCelebration] = useState(false);
+
+  useEffect(() => {
+    if (
+      overallProgress === 100 &&
+      !hasTriggeredCelebration &&
+      !showCelebration
+    ) {
+      setHasTriggeredCelebration(true);
+      // Small delay to let the progress bar animate to 100%
+      setTimeout(() => triggerCelebration(), 300);
+    }
+  }, [
+    overallProgress,
+    hasTriggeredCelebration,
+    showCelebration,
+    triggerCelebration,
+  ]);
 
   const updateState = useCallback((updates: Partial<WorkflowState>) => {
     setState((prev) => ({ ...prev, ...updates }));
@@ -759,6 +788,8 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
       selectedProject: undefined,
     });
     setShowWelcome(false);
+    setShowCelebration(false);
+    setHasTriggeredCelebration(false);
   }, []);
 
   const getStepStatus = (stepId: WorkflowStep) => {
@@ -796,7 +827,10 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
       <div className="flex-1 w-full max-w-4xl mx-auto p-6">
         <div className="text-center space-y-6">
           <div className="space-y-2">
-            <h1 className="text-4xl font-bold">Welcome to Dreamschema</h1>
+            <h1 className="text-2xl font-bold flex items-center justify-center gap-2">
+              CSV <ArrowRight className="size-5" /> to{" "}
+              <ArrowRight className="size-5" /> Supabase
+            </h1>
             <p className="text-xl text-muted-foreground">
               Transform your CSV files into production-ready Postgres schemas
               with AI
@@ -808,7 +842,7 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
             <Card className="max-w-2xl mx-auto">
               <CardContent className="py-4">
                 <div className="flex items-center justify-center gap-2 text-green-600">
-                  <CheckCircle2 className="h-5 w-5" />
+                  <SupabaseLogoMark />
                   <span className="font-medium">Connected to Supabase</span>
                   {oauthState.user?.email && (
                     <span className="text-sm text-muted-foreground">
@@ -893,9 +927,9 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                 onClick={() => oauth.disconnect()}
                 variant="outline"
                 size="lg"
-                className="gap-2 text-red-600 hover:text-red-700"
+                className="gap-2 text-red-600 hover:text-red-700 hover:bg-red-500/10"
               >
-                <SupabaseLogoMark />
+                <SupabaseLogoMarkRed />
                 Disconnect Supabase
               </Button>
             )}
@@ -1648,7 +1682,7 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                           "Seeding completed successfully:",
                           result.statistics
                         );
-                        // Could mark a "seeding complete" state here
+                        markStepComplete("seed");
                       }
                     }}
                     onSeedingProgress={(progress) => {
@@ -1665,6 +1699,88 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
 
       {/* Global Feedback Manager */}
       <FeedbackManager />
+
+      {/* Celebration Modal */}
+      {showCelebration && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm">
+          <div className="relative">
+            {/* Confetti Animation */}
+            <div className="absolute inset-0 pointer-events-none overflow-hidden">
+              <style>{`
+                @keyframes confetti-fall {
+                  0% {
+                    transform: translateY(-10px) rotate(0deg);
+                    opacity: 1;
+                  }
+                  100% {
+                    transform: translateY(calc(100vh + 20px)) rotate(360deg);
+                    opacity: 0;
+                  }
+                }
+              `}</style>
+              {Array.from({ length: 50 }, (_, i) => (
+                <div
+                  key={i}
+                  className="absolute w-2 h-2 rounded-full"
+                  style={{
+                    left: `${Math.random() * 100}%`,
+                    top: "-10px",
+                    backgroundColor: [
+                      "#3CCE8E",
+                      "#10b981",
+                      "#00623A",
+                      "#4D8B70",
+                      "#90E2B9",
+                      "#06b6d4",
+                    ][Math.floor(Math.random() * 6)],
+                    animation: `confetti-fall ${
+                      2 + Math.random() * 3
+                    }s linear ${Math.random() * 2}s infinite`,
+                    transform: `rotate(${Math.random() * 360}deg)`,
+                  }}
+                />
+              ))}
+            </div>
+
+            {/* Celebration Card */}
+            <Card className="mx-4 w-full max-w-md text-center">
+              <CardContent className="p-8">
+                <div className="mb-4">
+                  <CheckCircle2 className="h-16 w-16 text-green-600 mx-auto animate-pulse" />
+                </div>
+                <h2 className="text-2xl font-bold mb-2">🎉 Congratulations!</h2>
+                <p className="text-muted-foreground mb-4">
+                  You&apos;ve successfully completed your entire database schema
+                  workflow!
+                </p>
+                <div className="space-y-2 mb-6">
+                  <p className="text-sm font-medium">✅ Schema Generated</p>
+                  <p className="text-sm font-medium">✅ Optimized & Designed</p>
+                  <p className="text-sm font-medium">✅ Deployed to Supabase</p>
+                  <p className="text-sm font-medium">✅ Data Seeded</p>
+                </div>
+                <div className="flex gap-2 justify-center">
+                  <Button
+                    onClick={() => setShowCelebration(false)}
+                    className="gap-2"
+                  >
+                    <Eye className="h-4 w-4" />
+                    View Project
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={restartWorkflow}
+                    className="gap-2"
+                  >
+                    <Plus className="h-4 w-4" />
+                    New Project
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
