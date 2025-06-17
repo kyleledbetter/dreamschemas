@@ -56,6 +56,7 @@ import type {
   Table,
 } from "@/types/schema.types";
 import { ProjectStorage } from "@/lib/storage/project-storage";
+import { SchemaStorage } from "@/lib/storage/schema-storage";
 import { SupabaseLogoMark, SupabaseLogoMarkRed } from "../supabase-logo";
 
 interface SchemaWorkflowProps {
@@ -301,11 +302,31 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
     setState((prev) => ({ ...prev, ...updates }));
   }, []);
 
-  // Load project data from localStorage on mount
+  // Load project data and schema from localStorage on mount
   useEffect(() => {
     const projectData = ProjectStorage.retrieve();
     if (projectData) {
       updateState({ projectData });
+    }
+
+    const storedSchema = SchemaStorage.retrieve();
+    if (storedSchema) {
+      updateState({ generatedSchema: storedSchema });
+      const newCompletedSteps = new Set<WorkflowStep>();
+      if (WORKFLOW_STEPS.find(step => step.id === "upload")) newCompletedSteps.add("upload");
+      if (WORKFLOW_STEPS.find(step => step.id === "analyze")) newCompletedSteps.add("analyze");
+
+      let currentStep: WorkflowStep = "analyze";
+      if (WORKFLOW_STEPS.find(step => step.id === "design")) {
+        currentStep = "design";
+      }
+
+      // Ensure all previous steps are marked complete if jumping to design
+      if (currentStep === "design") {
+        if (WORKFLOW_STEPS.find(step => step.id === "optimize")) newCompletedSteps.add("optimize");
+      }
+
+      updateState({ completedSteps: newCompletedSteps, currentStep });
     }
   }, [updateState]);
 
@@ -659,7 +680,7 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                       isProcessing: false,
                       analysisProgress: metadata.progress,
                     });
-
+                    SchemaStorage.store(generatedSchema); // Save schema to local storage
                     markStepComplete("analyze");
                     setTimeout(() => nextStep(), 1000);
                   }
@@ -727,6 +748,7 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
   const handleDesignComplete = useCallback(
     (schema: DatabaseSchema) => {
       updateState({ generatedSchema: schema });
+      SchemaStorage.store(schema); // Save schema to local storage
       markStepComplete("design");
     },
     [updateState, markStepComplete]
@@ -774,8 +796,9 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
 
   // Restart workflow
   const restartWorkflow = useCallback(() => {
-    // Clear project data from localStorage
+    // Clear project data and schema from localStorage
     ProjectStorage.clear();
+    SchemaStorage.clear();
 
     setState({
       currentStep: "upload",

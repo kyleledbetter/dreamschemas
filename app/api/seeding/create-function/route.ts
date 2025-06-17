@@ -301,8 +301,9 @@ class CSVProcessor {
           // Smart column mapping with fuzzy matching
           table.columns?.forEach((col: any) => {
             if (!['id', 'created_at', 'updated_at'].includes(col.name)) {
-              // Try multiple ways to find the CSV column
-              const csvValue = this.findCsvValue(row, col.name);
+              // Use originalCSVColumn if available, otherwise fall back to col.name
+              const csvHeader = col.originalCSVColumn || col.name;
+              const csvValue = row[csvHeader]; // Get value from CSV row using the determined header
               const value = String(csvValue || '').trim();
               
               if (csvValue !== undefined) {
@@ -1068,8 +1069,9 @@ class CSVProcessor {
         } else if (column.name === 'created_at' || column.name === 'updated_at') {
           mappedRow[column.name] = new Date().toISOString();
         } else {
-          // Use fuzzy matching to find CSV values
-          const rawValue = this.findCsvValue(row, column.name) || '';
+          // Use originalCSVColumn if available, otherwise fall back to column.name
+          const csvHeader = column.originalCSVColumn || column.name;
+          const rawValue = row[csvHeader] || ''; // Directly use the determined header
           const value = String(rawValue).trim();
           const colType = (column.type || '').toLowerCase();
           
