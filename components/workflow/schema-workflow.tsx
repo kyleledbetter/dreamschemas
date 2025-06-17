@@ -56,6 +56,7 @@ import type {
   Table,
 } from "@/types/schema.types";
 import { ProjectStorage } from "@/lib/storage/project-storage";
+import { SchemaStorage } from "@/lib/storage/schema-storage";
 import { SupabaseLogoMark, SupabaseLogoMarkRed } from "../supabase-logo";
 
 interface SchemaWorkflowProps {
@@ -265,6 +266,8 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
 
   const [showWelcome, setShowWelcome] = useState(true);
   const [showCelebration, setShowCelebration] = useState(false);
+  const [schemaRecovered, setSchemaRecovered] = useState(false);
+  const [hasStoredSchema, setHasStoredSchema] = useState(false);
 
   // Calculate overall progress
   const overallProgress =
@@ -279,6 +282,88 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
 
   // Watch for 100% completion (only trigger once)
   const [hasTriggeredCelebration, setHasTriggeredCelebration] = useState(false);
+
+  // Schema Recovery and detection on component mount
+  useEffect(() => {
+    const recoverSchema = () => {
+      try {
+        setHasStoredSchema(SchemaStorage.exists());
+        const storedData = SchemaStorage.load();
+        if (storedData && !schemaRecovered) {
+          console.log("🔄 Recovering stored schema:", storedData.schema.name);
+
+          // Generate default optimization result for recovered schema
+          const optimizationResult: SchemaOptimizationResult = {
+            originalSchema: storedData.schema,
+            optimizedSchema: storedData.schema,
+            suggestions: [],
+            summary: {
+              totalSuggestions: 0,
+              criticalIssues: 0,
+              autoApplicableCount: 0,
+              estimatedPerformanceGain: 0,
+              confidenceScore: 85,
+            },
+            aiAnalysis:
+              storedData.originalAnalysis &&
+              typeof storedData.originalAnalysis === "object" &&
+              "confidence" in storedData.originalAnalysis
+                ? (storedData.originalAnalysis as SchemaOptimizationResult["aiAnalysis"])
+                : {
+                    reasoning: "Schema recovered from browser storage",
+                    suggestions: [],
+                    tables: storedData.schema.tables.map((table) => ({
+                      name: table.name,
+                      columns: table.columns.map((col) => ({
+                        name: col.name,
+                        type: col.type,
+                        nullable: col.nullable,
+                        length: col.length,
+                        precision: col.precision,
+                        scale: col.scale,
+                        defaultValue: col.defaultValue,
+                        constraints: col.constraints.map((c) => c.type),
+                        reasoning:
+                          col.comment ||
+                          `Column ${col.name} of type ${col.type}`,
+                      })),
+                      relationships: [],
+                      indexes: [],
+                      comment: table.comment,
+                      rlsPolicies: [],
+                    })),
+                    confidence:
+                      storedData.originalAnalysis &&
+                      typeof storedData.originalAnalysis === "object" &&
+                      "confidence" in storedData.originalAnalysis
+                        ? (
+                            storedData.originalAnalysis as {
+                              confidence: number;
+                            }
+                          ).confidence
+                        : 0.85,
+                  },
+          };
+
+          setState((prevState) => ({
+            ...prevState,
+            generatedSchema: storedData.schema,
+            optimizationResult,
+            completedSteps: new Set(["upload", "analyze", "optimize"]),
+            currentStep: "design",
+          }));
+
+          setSchemaRecovered(true);
+          setShowWelcome(false); // Skip welcome if we have a recovered schema
+        }
+      } catch (error) {
+        console.error("❌ Failed to recover schema:", error);
+        SchemaStorage.clear(); // Clear corrupted data
+      }
+    };
+
+    recoverSchema();
+  }, [schemaRecovered]);
 
   useEffect(() => {
     if (
@@ -653,6 +738,22 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                       },
                     };
 
+                    // Save schema to localStorage for persistence
+                    try {
+                      SchemaStorage.save({
+                        schema: generatedSchema,
+                        originalAnalysis: analysis,
+                        csvFileNames: state.csvResults.map(
+                          (r, index) => `file_${index + 1}.csv`
+                        ),
+                      });
+                    } catch (error) {
+                      console.warn(
+                        "⚠️ Failed to save schema to localStorage:",
+                        error
+                      );
+                    }
+
                     updateState({
                       generatedSchema,
                       optimizationResult,
@@ -726,6 +827,13 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
   // Handle schema design completion
   const handleDesignComplete = useCallback(
     (schema: DatabaseSchema) => {
+      // Update schema in localStorage when design changes
+      try {
+        SchemaStorage.updateSchema(schema);
+      } catch (error) {
+        console.warn("⚠️ Failed to update stored schema:", error);
+      }
+
       updateState({ generatedSchema: schema });
       markStepComplete("design");
     },
@@ -776,6 +884,8 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
   const restartWorkflow = useCallback(() => {
     // Clear project data from localStorage
     ProjectStorage.clear();
+    // Clear stored schema
+    SchemaStorage.clear();
 
     setState({
       currentStep: "upload",
@@ -790,6 +900,7 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
     setShowWelcome(false);
     setShowCelebration(false);
     setHasTriggeredCelebration(false);
+    setSchemaRecovered(false);
   }, []);
 
   const getStepStatus = (stepId: WorkflowStep) => {
@@ -825,6 +936,51 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
   if (showWelcome) {
     return (
       <div className="flex-1 w-full max-w-4xl mx-auto p-6">
+        {/* Schema Recovery Banner */}
+        {hasStoredSchema && !schemaRecovered && (
+          <Alert className="mb-6 border-blue-200 bg-blue-50">
+            <Info className="h-4 w-4 text-blue-600" />
+            <AlertDescription className="text-blue-800">
+              <div className="flex items-center justify-between">
+                <div>
+                  <strong>Previous session detected!</strong> We found a saved
+                  schema from your last session.
+                  <br />
+                  <span className="text-sm text-blue-600">
+                    {(() => {
+                      const metadata = SchemaStorage.getMetadata();
+                      return `${metadata.schemaName} with ${
+                        metadata.tableCount
+                      } tables (${metadata.ageHours?.toFixed(1)}h ago)`;
+                    })()}
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      SchemaStorage.clear();
+                      setShowWelcome(true);
+                    }}
+                    variant="outline"
+                    className="text-blue-600 border-blue-200"
+                  >
+                    Start Fresh
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => window.location.reload()}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    <RefreshCw className="h-3 w-3 mr-1" />
+                    Recover Schema
+                  </Button>
+                </div>
+              </div>
+            </AlertDescription>
+          </Alert>
+        )}
+
         <div className="text-center space-y-6">
           <div className="space-y-2">
             <h1 className="text-2xl font-bold flex items-center justify-center gap-2">

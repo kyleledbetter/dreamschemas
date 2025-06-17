@@ -187,6 +187,12 @@ export interface SeedingProgress {
   errors: DataError[];
   warnings: DataWarning[];
   lastUpdate: Date;
+  needsContinuation?: boolean;
+  continuationData?: {
+    processedRows: number;
+    totalRows: number;
+    nextChunkIndex: number;
+  };
 }
 
 // Storage types

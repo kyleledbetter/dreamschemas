@@ -153,25 +153,50 @@ class CSVProcessor {
     
     await this.quickPreCreateLookups();
 
-    // Process in chunks with progress updates
-    const chunkSize = 15; // Even smaller chunks for better CPU compliance
-    let processedRows = 0;
+    // Process in larger chunks for efficiency
+    const chunkSize = Math.min(50, Math.ceil(totalRows / 10)); // Process in 10 chunks or 50 rows max
+    let processedRows = this.request.processedRows || 0; // Resume from where we left off
+    const startChunkIndex = Math.floor(processedRows / chunkSize);
 
-    for (let chunkIndex = 0; chunkIndex * chunkSize < totalRows; chunkIndex++) {
+    console.log(\`📋 Processing \${totalRows} total rows in chunks of \${chunkSize}\`);
+    console.log(\`📋 Resuming from chunk \${startChunkIndex}, \${processedRows} rows already processed\`);
+
+    for (let chunkIndex = startChunkIndex; chunkIndex * chunkSize < totalRows; chunkIndex++) {
       // More lenient CPU time check - allow more time since we're doing real work
       const cpuTimeUsed = Date.now() - this.startTime;
-      if (cpuTimeUsed > 1800) { // 1.8 seconds instead of 1.5
+      if (cpuTimeUsed > 7000) { // Increased to 7 seconds to process more data per invocation
         console.log(\`⏰ CPU limit reached at chunk \${chunkIndex}, processed \${processedRows}/\${totalRows} rows\`);
         console.log(\`📊 Successfully processed \${processedRows} rows before limit\`);
         
-        // Update progress to show partial completion
-        this.updateProgress(
-          Math.min(95, (processedRows / totalRows) * 100),
-          "processing",
-          \`Processed \${processedRows}/\${totalRows} rows (CPU limit reached)\`
-        );
-        onProgress(this.progress);
-        break;
+        // In streaming mode, we need to schedule continuation via separate request
+        if (processedRows < totalRows) {
+          console.log(\`🔄 Scheduling continuation for remaining \${totalRows - processedRows} rows\`);
+          
+          // Update progress to show we're continuing
+          this.updateProgress(
+            Math.min(95, (processedRows / totalRows) * 100),
+            "processing",
+            \`Processed \${processedRows}/\${totalRows} rows, continuing in new request...\`
+          );
+          onProgress(this.progress);
+          
+          // Return current progress but mark as continuing
+          this.progress.status = "processing";
+          this.progress.currentPhase = "processing";
+          
+          // For now, just finish processing what we can and let the client handle continuation
+          // This is more reliable than self-invocation which may not work in all environments
+          console.log(\`🔄 Will signal client to continue processing from row \${processedRows}\`);
+          
+          this.progress.needsContinuation = true;
+          this.progress.continuationData = {
+            processedRows: processedRows,
+            totalRows: totalRows,
+            nextChunkIndex: Math.ceil(processedRows / chunkSize),
+          };
+        }
+        
+        return this.progress; // Exit early when scheduling continuation
       }
 
       const startIdx = chunkIndex * chunkSize;
@@ -203,7 +228,8 @@ class CSVProcessor {
       // Process chunk data efficiently
       await this.processChunkDataQuick(chunkData);
 
-      processedRows = endIdx;
+      const chunkProcessedCount = chunkLines.length;
+      processedRows += chunkProcessedCount;
       this.progress.processedRows = processedRows;
       this.progress.successfulRows = processedRows; // Assume success for now
 
@@ -387,7 +413,7 @@ class CSVProcessor {
   }
 
   /**
-   * Smart CSV column value finder with fuzzy matching
+   * Enhanced CSV column value finder with intelligent mapping
    */
   private findCsvValue(row: any, dbColumnName: string): any {
     // Try exact match first
@@ -402,13 +428,22 @@ class CSVProcessor {
       return row[exactMatch];
     }
     
-    // Try common variations
+    // Enhanced variations with better semantic matching
     const variations = [
+      // Basic transformations
       dbColumnName.replace(/_/g, ''), // Remove underscores
       dbColumnName.replace(/_/g, ' '), // Underscores to spaces
       dbColumnName.replace(/_/g, '-'), // Underscores to hyphens
       dbColumnName.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(''), // PascalCase
       dbColumnName.split('_').join(' ').toLowerCase(), // Sentence case
+      
+      // Common field name aliases
+      ...(dbColumnName === 'id' ? ['ID', 'identifier', 'primary_key', 'pk'] : []),
+      ...(dbColumnName === 'name' ? ['title', 'label', 'description', 'desc'] : []),
+      ...(dbColumnName === 'created_at' ? ['created', 'date_created', 'creation_date', 'created_date'] : []),
+      ...(dbColumnName === 'updated_at' ? ['updated', 'modified', 'date_modified', 'last_modified'] : []),
+      ...(dbColumnName.includes('date') ? [dbColumnName.replace('date', 'time'), dbColumnName.replace('_date', '')] : []),
+      ...(dbColumnName.includes('_id') ? [dbColumnName.replace('_id', ''), dbColumnName.replace('_id', '_key')] : []),
     ];
     
     for (const variation of variations) {
@@ -418,69 +453,192 @@ class CSVProcessor {
       }
     }
     
-    // Try partial matches for common patterns
-    const partialMatch = keys.find(key => {
-      const keyLower = key.toLowerCase();
-      const colLower = dbColumnName.toLowerCase();
-      return keyLower.includes(colLower) || colLower.includes(keyLower);
-    });
+    // Semantic partial matching with scoring
+    const semanticMatches = keys.map(key => ({
+      key,
+      score: this.calculateSemanticScore(key.toLowerCase(), dbColumnName.toLowerCase())
+    })).filter(m => m.score > 0.5).sort((a, b) => b.score - a.score);
     
-    return partialMatch ? row[partialMatch] : undefined;
+    if (semanticMatches.length > 0) {
+      return row[semanticMatches[0].key];
+    }
+    
+    return undefined;
   }
 
   /**
-   * Filter data relevant to a specific table
+   * Calculate semantic similarity score between CSV column and DB column
+   */
+  private calculateSemanticScore(csvCol: string, dbCol: string): number {
+    if (csvCol === dbCol) return 1.0;
+    
+    // Remove common separators for comparison
+    const cleanCsv = csvCol.replace(/[_\s-]/g, '');
+    const cleanDb = dbCol.replace(/[_\s-]/g, '');
+    
+    if (cleanCsv === cleanDb) return 0.9;
+    
+    // Check if one contains the other
+    if (cleanCsv.includes(cleanDb) || cleanDb.includes(cleanCsv)) return 0.8;
+    
+    // Check for common prefixes/suffixes
+    const csvWords = csvCol.split(/[_\s-]+/);
+    const dbWords = dbCol.split(/[_\s-]+/);
+    
+    const commonWords = csvWords.filter(word => dbWords.includes(word));
+    const unionSize = new Set([...csvWords, ...dbWords]).size;
+    
+    if (commonWords.length > 0) {
+      return (commonWords.length * 2) / unionSize; // Jaccard-like similarity
+    }
+    
+    // Levenshtein distance for close matches
+    const distance = this.levenshteinDistance(cleanCsv, cleanDb);
+    const maxLen = Math.max(cleanCsv.length, cleanDb.length);
+    
+    if (maxLen === 0) return 0;
+    
+    const similarity = 1 - (distance / maxLen);
+    return similarity > 0.6 ? similarity : 0;
+  }
+
+  /**
+   * Calculate Levenshtein distance between two strings
+   */
+  private levenshteinDistance(str1: string, str2: string): number {
+    const matrix = Array(str2.length + 1).fill(null).map(() => Array(str1.length + 1).fill(null));
+    
+    for (let i = 0; i <= str1.length; i++) matrix[0][i] = i;
+    for (let j = 0; j <= str2.length; j++) matrix[j][0] = j;
+    
+    for (let j = 1; j <= str2.length; j++) {
+      for (let i = 1; i <= str1.length; i++) {
+        const indicator = str1[i - 1] === str2[j - 1] ? 0 : 1;
+        matrix[j][i] = Math.min(
+          matrix[j][i - 1] + 1, // deletion
+          matrix[j - 1][i] + 1, // insertion
+          matrix[j - 1][i - 1] + indicator // substitution
+        );
+      }
+    }
+    
+    return matrix[str2.length][str1.length];
+  }
+
+  /**
+   * Enhanced table filtering based on dynamic schema analysis
    */
   private filterDataForTable(data: any[], table: any): any[] {
-    const tableName = table.name.toLowerCase();
+    if (!data || data.length === 0) return [];
     
-    // Properties table gets all CSV rows
-    if (tableName === 'properties') {
+    const tableName = table.name.toLowerCase();
+    console.log(\`[Dynamic Filter] Processing table: \${tableName} with \${table.columns?.length || 0} columns\`);
+    
+    // Check if this is a main entity table (has many non-foreign-key columns)
+    const isMainEntity = this.isMainEntityTable(table);
+    
+    // Check if this is a lookup/reference table (few columns, mainly name/id)
+    const isLookupTable = this.isLookupTable(table);
+    
+    if (isMainEntity) {
+      console.log(\`[Dynamic Filter] \${tableName} identified as main entity - returning all data\`);
       return data;
     }
     
-    // Permit statuses - extract unique status values
-    if (tableName === 'permit_statuses') {
-      return this.extractUniqueValues(data, [
-        'permit_status', 'status', 'initial_status', 'latest_status',
-        'application_status', 'current_status'
-      ], 'status');
+    if (isLookupTable) {
+      console.log(\`[Dynamic Filter] \${tableName} identified as lookup table - extracting unique values\`);
+      return this.extractUniqueValuesForLookup(data, table);
     }
     
-    // Builders - extract unique builder names
-    if (tableName === 'builders') {
-      return this.extractUniqueValues(data, [
-        'builder', 'builder_name', 'contractor', 'contractor_name',
-        'company', 'business_name'
-      ], 'name');
+    // For relationship tables, filter based on relevant data presence
+    const relevantData = data.filter(row => this.hasRelevantDataForTable(row, table));
+    console.log(\`[Dynamic Filter] \${tableName} filtered to \${relevantData.length}/\${data.length} relevant rows\`);
+    
+    return relevantData;
+  }
+
+  /**
+   * Determine if a table is a main entity table
+   */
+  private isMainEntityTable(table: any): boolean {
+    if (!table.columns) return false;
+    
+    const nonSystemColumns = table.columns.filter(col => 
+      !['id', 'created_at', 'updated_at'].includes(col.name.toLowerCase())
+    );
+    
+    const foreignKeyColumns = table.columns.filter(col => 
+      col.name.toLowerCase().endsWith('_id') && col.name.toLowerCase() !== 'id'
+    );
+    
+    // Main entity if it has many non-FK columns
+    const dataColumns = nonSystemColumns.length - foreignKeyColumns.length;
+    return dataColumns >= 3; // At least 3 data columns suggests main entity
+  }
+
+  /**
+   * Enhanced lookup table detection
+   */
+  private isLookupTable(table: any): boolean {
+    if (!table.columns) return false;
+    
+    // Simple lookup patterns
+    const lookupPatterns = ['_types', '_statuses', '_categories', 'jurisdictions', 'roles', 'permissions'];
+    if (lookupPatterns.some(pattern => table.name.toLowerCase().includes(pattern))) {
+      return true;
     }
     
-    // Permits - return all data but will need property_id matching later
-    if (tableName === 'permits') {
-      return data.filter(row => {
-        // Only include rows that have permit-related data
-        return this.hasPermitData(row);
-      });
+    // Small tables with name field
+    const hasNameField = table.columns.some(col => 
+      ['name', 'title', 'label', 'value'].includes(col.name.toLowerCase())
+    );
+    
+    const nonSystemColumns = table.columns.filter(col => 
+      !['id', 'created_at', 'updated_at'].includes(col.name.toLowerCase())
+    );
+    
+    return hasNameField && nonSystemColumns.length <= 3;
+  }
+
+  /**
+   * Extract unique values for lookup tables based on table structure
+   */
+  private extractUniqueValuesForLookup(data: any[], table: any): any[] {
+    // Find the primary value column (usually 'name', 'title', etc.)
+    const valueColumn = table.columns?.find(col => 
+      ['name', 'title', 'label', 'value', 'status', 'type'].includes(col.name.toLowerCase())
+    );
+    
+    if (!valueColumn) {
+      console.log(\`[Lookup] No value column found for \${table.name}, using name fallback\`);
+      return this.extractUniqueValues(data, ['name', 'title', 'status', 'type'], 'name');
     }
     
-    // Sales - return all data but will need property_id matching later
-    if (tableName === 'sales') {
-      return data.filter(row => {
-        // Only include rows that have sales-related data
-        return this.hasSalesData(row);
-      });
-    }
+    const csvKeys = Object.keys(data[0] || {});
+    const relevantCsvColumns = csvKeys.filter(key => 
+      this.calculateSemanticScore(key.toLowerCase(), valueColumn.name.toLowerCase()) > 0.5
+    );
     
-    // Property characteristics - return all data, will match 1:1 with properties
-    if (tableName === 'property_characteristics') {
-      return data.filter(row => {
-        // Only include rows that have characteristic data
-        return this.hasCharacteristicData(row);
-      });
-    }
+    console.log(\`[Lookup] Extracting \${valueColumn.name} from CSV columns: \${relevantCsvColumns.join(', ')}\`);
     
-    // Default: return empty for unknown tables
-    return [];
+    return this.extractUniqueValues(data, relevantCsvColumns, valueColumn.name);
+  }
+
+  /**
+   * Check if row has relevant data for a specific table
+   */
+  private hasRelevantDataForTable(row: any, table: any): boolean {
+    if (!table.columns) return false;
+    
+    // Check if row has data for any of the table's non-system columns
+    const dataColumns = table.columns.filter(col => 
+      !['id', 'created_at', 'updated_at'].includes(col.name.toLowerCase())
+    );
+    
+    return dataColumns.some(col => {
+      const value = this.findCsvValue(row, col.name);
+      return value && value !== '' && value !== 'null' && value !== 'NULL';
+    });
   }
   
   /**

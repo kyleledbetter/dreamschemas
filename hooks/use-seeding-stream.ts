@@ -96,21 +96,24 @@ export function useSeedingStream(options: SeedingStreamOptions = {}) {
         throw new Error(`Failed to create Edge Function: ${errorData.error}`);
       }
 
-      // Prepare request payload for the seeding job
-      const jobData = {
-        fileId: job.fileUpload?.id || "",
-        jobId,
-        configuration: job.configuration,
-        schema: job.schema,
-        fileUpload: job.fileUpload ? {
-          storagePath: job.fileUpload.storagePath,
-          filename: job.fileUpload.filename,
-          size: job.fileUpload.size,
-        } : undefined,
-      };
-
       // Start the seeding job via our API route (streaming)
       const streamUrl = `/api/seeding/start?stream=true`;
+      
+      // Prepare request payload for the seeding job
+      const createJobData = (baseJob: SeedingJob, overrides: any = {}) => ({
+        fileId: baseJob.fileUpload?.id || "",
+        jobId,
+        configuration: baseJob.configuration,
+        schema: baseJob.schema,
+        fileUpload: baseJob.fileUpload ? {
+          storagePath: baseJob.fileUpload.storagePath,
+          filename: baseJob.fileUpload.filename,
+          size: baseJob.fileUpload.size,
+        } : undefined,
+        ...overrides,
+      });
+
+      const jobData = createJobData(job);
       
       // First, send the POST request to initiate seeding
       const response = await fetch(streamUrl, {
@@ -184,6 +187,52 @@ export function useSeedingStream(options: SeedingStreamOptions = {}) {
                         progress,
                       }));
                       onProgress?.(progress);
+                      
+                      // Handle continuation if needed
+                      if (progress.needsContinuation && progress.continuationData) {
+                        console.log(`🔄 Continuing seeding from row ${progress.continuationData.processedRows}`);
+                        
+                        // Schedule continuation after a short delay
+                        setTimeout(async () => {
+                          try {
+                            // Get the current job data and update it for continuation
+                            const continuationJobData = createJobData(job, {
+                              processedRows: progress.continuationData!.processedRows,
+                              chunkIndex: progress.continuationData!.nextChunkIndex,
+                            });
+                            
+                            // Start continuation request
+                            const continuationResponse = await fetch(streamUrl, {
+                              method: "POST",
+                              headers: {
+                                "Content-Type": "application/json",
+                                "Authorization": `Bearer ${oauthState.accessToken}`,
+                              },
+                              body: JSON.stringify({
+                                projectId,
+                                jobData: continuationJobData,
+                              }),
+                            });
+                            
+                            if (!continuationResponse.ok) {
+                              throw new Error(`Continuation failed: ${continuationResponse.statusText}`);
+                            }
+                            
+                            // We don't need to process this response as it will send its own progress updates
+                            console.log(`✅ Continuation request successful`);
+                            
+                          } catch (continuationError) {
+                            console.error('❌ Failed to continue seeding:', continuationError);
+                            const error = new Error(`Continuation failed: ${continuationError instanceof Error ? continuationError.message : 'Unknown error'}`);
+                            setState(prev => ({
+                              ...prev,
+                              error,
+                              isProcessing: false,
+                            }));
+                            onError?.(error);
+                          }
+                        }, 500); // Small delay to ensure current response is processed
+                      }
                       break;
 
                     case "complete":
