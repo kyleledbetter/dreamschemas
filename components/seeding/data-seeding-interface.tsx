@@ -391,6 +391,29 @@ export function DataSeedingInterface({
     setIsUploading(true);
 
     try {
+      // First, ensure the Edge Function exists in the user's project (CPU-optimized version)
+      const createFunctionResponse = await fetch(
+        "/api/seeding/create-function",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${oauth.getState().accessToken}`,
+          },
+          body: JSON.stringify({
+            projectId,
+            useSimpleVersion: false, // Use advanced version with streaming by default
+          }),
+        }
+      );
+
+      if (!createFunctionResponse.ok) {
+        const errorData = await createFunctionResponse.json();
+        throw new Error(
+          `Failed to deploy CPU-optimized Edge Function: ${errorData.error}`
+        );
+      }
+
       // Simulate file upload progress
       for (let progress = 0; progress <= 100; progress += 10) {
         setUploadProgress((prev) => ({
@@ -533,6 +556,21 @@ export function DataSeedingInterface({
                   schema.projectId || debugInfo.passedProject
                 ) || "missing"}
                 &quot;
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {/* Progress Debug - Show current seeding progress */}
+          {seedingProgress && process.env.NODE_ENV === "development" && (
+            <Alert className="mt-4">
+              <TrendingUp className="h-4 w-4" />
+              <AlertDescription>
+                <strong>Live Progress:</strong>{" "}
+                {seedingProgress.overallProgress?.toFixed(1)}% | Phase:{" "}
+                {seedingProgress.currentPhase} | Status:{" "}
+                {seedingProgress.status} |
+                {seedingProgress.currentTable &&
+                  ` Table: ${seedingProgress.currentTable}`}
               </AlertDescription>
             </Alert>
           )}
