@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSeedingStream } from "@/hooks/use-seeding-stream";
 import { StorageManager } from "@/lib/seeding/storage-manager";
 import { ProjectData, ProjectStorage } from "@/lib/storage/project-storage";
-import { getSupabaseOAuth, type OAuthState } from "@/lib/supabase/oauth";
+import { getSupabaseOAuth } from "@/lib/supabase/oauth";
 import { cn } from "@/lib/utils";
 import type { DatabaseSchema } from "@/types/schema.types";
 import type {
@@ -42,6 +42,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 interface DataSeedingInterfaceProps {
   schema: DatabaseSchema;
   projectId: string;
+  userEmail: string | null; // Use our own auth system's user email
   onSeedingComplete?: (result: {
     success: boolean;
     statistics?: unknown;
@@ -53,6 +54,7 @@ interface DataSeedingInterfaceProps {
 export function DataSeedingInterface({
   schema,
   projectId,
+  userEmail,
   onSeedingComplete,
   onSeedingProgress,
   className = "",
@@ -76,11 +78,8 @@ export function DataSeedingInterface({
     passedProject: projectId,
   });
 
-  // OAuth state for accessing user's Supabase project
-  const [oauthState, setOauthState] = useState<OAuthState>({
-    isConnected: false,
-    isLoading: false,
-  });
+  // Get OAuth instance (consistent with migration-deployer)
+  const oauth = getSupabaseOAuth();
 
   // Debug project data availability
   const projectData = ProjectStorage.getProjectId(projectId);
@@ -108,12 +107,7 @@ export function DataSeedingInterface({
   // Initialize StorageManager
   const storageManager = new StorageManager();
 
-  // Subscribe to OAuth state
-  useEffect(() => {
-    const oauth = getSupabaseOAuth();
-    const unsubscribe = oauth.subscribe(setOauthState);
-    return unsubscribe;
-  }, []);
+  // No need to subscribe to OAuth state changes since we use oauth.getState() directly
 
   // Debug project data availability
   useEffect(() => {
@@ -185,7 +179,7 @@ export function DataSeedingInterface({
   useEffect(() => {
     const initStorage = async () => {
       // Only proceed if we have OAuth connection and project ID
-      if (!oauthState.isConnected || !oauthState.accessToken || !projectId) {
+      if (!oauth.getState().isConnected || !projectId) {
         console.log("Waiting for OAuth connection and project ID...");
         return;
       }
@@ -199,7 +193,8 @@ export function DataSeedingInterface({
     };
 
     const createBucket = async () => {
-      if (!oauthState.accessToken) {
+      const currentState = oauth.getState();
+      if (!currentState.accessToken) {
         throw new Error("No OAuth access token available");
       }
 
@@ -209,7 +204,7 @@ export function DataSeedingInterface({
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${oauthState.accessToken}`,
+            Authorization: `Bearer ${currentState.accessToken}`,
           },
           body: JSON.stringify({
             projectId: projectId,
@@ -229,7 +224,7 @@ export function DataSeedingInterface({
     };
 
     initStorage();
-  }, [oauthState.isConnected, oauthState.accessToken, projectId]);
+  }, [oauth, projectId]);
 
   const handleFileSelect = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -256,11 +251,12 @@ export function DataSeedingInterface({
       // Ensure bucket exists before uploading files
       console.log("Ensuring csv-uploads bucket exists before file upload...");
       try {
+        const currentState = oauth.getState();
         const bucketResponse = await fetch("/api/storage/create-bucket", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${oauthState.accessToken}`,
+            Authorization: `Bearer ${currentState.accessToken}`,
           },
           body: JSON.stringify({
             projectId: projectId,
@@ -283,7 +279,8 @@ export function DataSeedingInterface({
       // Upload files to user's Supabase project using API route
       for (const file of validFiles) {
         try {
-          if (!oauthState.accessToken) {
+          const currentState = oauth.getState();
+          if (!currentState.accessToken) {
             console.error("No OAuth access token available for upload");
             continue;
           }
@@ -291,7 +288,10 @@ export function DataSeedingInterface({
           const fileId = `file_${Date.now()}_${Math.random()
             .toString(36)
             .substr(2, 9)}`;
-          const filePath = `current_user/${projectId}/${fileId}/${file.name}`;
+          const userId = `${userEmail?.split("@")[0].toLowerCase()}${
+            userEmail && "_"
+          }data-seeding`; // Use email prefix as folder name
+          const filePath = `${userId}/${projectId}/${fileId}/${file.name}`;
 
           console.log(`Uploading file to user's project: ${filePath}`);
 
@@ -305,7 +305,7 @@ export function DataSeedingInterface({
           const response = await fetch("/api/storage/upload", {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${oauthState.accessToken}`,
+              Authorization: `Bearer ${currentState.accessToken}`,
             },
             body: formData,
           });
@@ -322,7 +322,7 @@ export function DataSeedingInterface({
           // Create FileUpload object for state management
           const fileUpload: FileUpload = {
             id: fileId,
-            userId: "current_user",
+            userId: userId,
             projectId,
             filename: file.name,
             originalName: file.name,
@@ -367,7 +367,7 @@ export function DataSeedingInterface({
 
       setIsUploading(false);
     },
-    [projectId, storageManager, oauthState.accessToken]
+    [projectId, storageManager, oauth]
   );
 
   const removeFile = useCallback((fileId: string) => {
@@ -380,7 +380,12 @@ export function DataSeedingInterface({
   }, []);
 
   const startSeeding = useCallback(async () => {
-    if (files.length === 0) return;
+    if (files.length === 0 || !oauth.getState().isConnected) {
+      console.error(
+        "Cannot start seeding: no files uploaded or not connected to Supabase"
+      );
+      return;
+    }
 
     setActiveTab("progress");
     setIsUploading(true);
@@ -398,9 +403,10 @@ export function DataSeedingInterface({
       setIsUploading(false);
 
       // Create seeding job
+      const currentUserId = userEmail?.split("@")[0] || "data-seeding";
       const seedingJob: SeedingJob = {
         id: `job_${Date.now()}`,
-        userId: "current_user",
+        userId: currentUserId,
         projectId,
         fileId: files[0].id,
         fileUpload: files[0],
@@ -590,7 +596,7 @@ export function DataSeedingInterface({
 
             <CardContent className="space-y-4">
               {/* OAuth Connection Check */}
-              {!oauthState.isConnected && (
+              {!oauth.getState().isConnected && (
                 <Alert>
                   <AlertCircle className="h-4 w-4" />
                   <AlertDescription>
@@ -604,25 +610,25 @@ export function DataSeedingInterface({
               <div
                 className={cn(
                   "border-2 border-dashed border-muted-foreground/25 rounded-lg p-8 text-center transition-colors",
-                  oauthState.isConnected
+                  oauth.getState().isConnected
                     ? "cursor-pointer hover:border-muted-foreground/50"
                     : "opacity-50 cursor-not-allowed"
                 )}
                 onClick={() =>
-                  oauthState.isConnected && fileInputRef.current?.click()
+                  oauth.getState().isConnected && fileInputRef.current?.click()
                 }
               >
                 <Upload className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
                 <h3 className="text-lg font-medium mb-2">Upload CSV Files</h3>
                 <p className="text-muted-foreground mb-4">
-                  {oauthState.isConnected
+                  {oauth.getState().isConnected
                     ? "Click to select files or drag and drop"
                     : "Connect to Supabase to upload files"}
                 </p>
                 <Button
                   variant="outline"
                   className="gap-2"
-                  disabled={!oauthState.isConnected}
+                  disabled={!oauth.getState().isConnected}
                 >
                   <Plus className="h-4 w-4" />
                   Select Files
@@ -634,7 +640,7 @@ export function DataSeedingInterface({
                   accept=".csv,.txt"
                   onChange={handleFileSelect}
                   className="hidden"
-                  disabled={!oauthState.isConnected}
+                  disabled={!oauth.getState().isConnected}
                 />
               </div>
 

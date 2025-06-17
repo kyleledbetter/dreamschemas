@@ -186,7 +186,7 @@ const WORKFLOW_STEPS: Array<{
     id: "deploy",
     title: "Deploy to Supabase",
     description: "Deploy your schema to Supabase project",
-    icon: SupabaseLogoMark,
+    icon: Cloud, // Using Cloud icon instead of SupabaseLogoMark to avoid type mismatch
     estimatedTime: "3-5 min",
   },
   {
@@ -1676,6 +1676,7 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                   <DataSeedingInterface
                     schema={state.generatedSchema}
                     projectId={state.projectData.projectId}
+                    userEmail={user.email || null}
                     onSeedingComplete={(result) => {
                       if (result.success) {
                         console.log(
