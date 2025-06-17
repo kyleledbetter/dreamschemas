@@ -337,17 +337,20 @@ export class SupabaseOAuth {
     }
 
     const data = await response.json();
-    return {
+
+    const connection = {
       accessToken: data.access_token,
       refreshToken: data.refresh_token || undefined,
       expiresAt: data.expires_in ? Date.now() + (data.expires_in * 1000) : null,
       scope: data.scope ? data.scope.split(' ') : ['all'],
+      // Supabase Management API doesn't provide user info
       user: {
-        id: data.user_id || '',
-        email: data.email || '',
-        username: data.username || undefined,
+        id: '',
+        email: '',
       },
     };
+    
+    return connection;
   }
 
   /**

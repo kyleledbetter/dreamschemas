@@ -261,9 +261,26 @@ export class SupabaseManagementClient {
         }
       }
 
+      // Get project information to include in the deployment result
+      let projectInfo: { name: string; dbUrl: string } = { name: "", dbUrl: "" };
+      try {
+        const projectDetails = await this.getProject(projectId);
+        const connectionInfo = await this.getConnectionInfo(projectId);
+        projectInfo = {
+          name: projectDetails.name,
+          dbUrl: `postgresql://${connectionInfo.host}:${connectionInfo.port}/${connectionInfo.database}`,
+        };
+      } catch (error) {
+        console.warn("Failed to get project information:", error);
+        // Continue without project info rather than failing the deployment
+      }
+
       return {
         ...result,
         affected_tables: this.getAllTableNames(schema),
+        projectId,
+        projectName: projectInfo.name,
+        dbUrl: projectInfo.dbUrl,
       };
     } catch (error) {
       return {

@@ -38,7 +38,7 @@ export default function DashboardLayout({
               </Badge>
             </Link>
 
-            <nav className="hidden md:flex items-center gap-1">
+            <nav className="hidden items-center gap-1">
               <Button variant="ghost" size="sm" asChild>
                 <Link href="/dashboard" className="gap-2">
                   <Sparkles className="h-4 w-4" />

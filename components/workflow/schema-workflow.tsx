@@ -18,6 +18,7 @@ import {
   FileText,
   Info,
   Play,
+  Plus,
   RotateCcw,
   Sparkles,
   Upload,
@@ -34,6 +35,7 @@ import { FeedbackManager } from "@/components/feedback/feedback-manager";
 import { VisualSchemaEditor } from "@/components/schema/visual-schema-editor";
 import { MigrationDeployer } from "@/components/supabase/migration-deployer";
 import { ProjectSelector } from "@/components/supabase/project-selector";
+import { DataSeedingInterface } from "@/components/seeding/data-seeding-interface";
 
 // Import types and utilities
 import type { SchemaOptimizationResult } from "@/lib/ai/schema-optimizer";
@@ -53,7 +55,8 @@ import type {
   PostgresType,
   Table,
 } from "@/types/schema.types";
-import { SupabaseLogoMark } from "../supabase-logo";
+import { ProjectStorage } from "@/lib/storage/project-storage";
+import { SupabaseLogoMark, SupabaseLogoMarkRed } from "../supabase-logo";
 
 interface SchemaWorkflowProps {
   user: User;
@@ -65,7 +68,8 @@ type WorkflowStep =
   | "optimize"
   | "design"
   | "export"
-  | "deploy";
+  | "deploy"
+  | "seed";
 
 interface WorkflowState {
   currentStep: WorkflowStep;
@@ -145,21 +149,21 @@ const WORKFLOW_STEPS: Array<{
 }> = [
   {
     id: "upload",
-    title: "Upload CSV Files",
+    title: "Upload CSVs",
     description: "Upload and validate your CSV data files",
     icon: Upload,
     estimatedTime: "2-3 min",
   },
   {
     id: "analyze",
-    title: "AI Analysis",
+    title: "Analysis",
     description: "AI analyzes your data to generate optimal schema",
     icon: Brain,
     estimatedTime: "3-5 min",
   },
   {
     id: "optimize",
-    title: "Optimize Schema",
+    title: "Review",
     description: "Review and apply AI optimization suggestions",
     icon: Sparkles,
     estimatedTime: "5-10 min",
@@ -182,8 +186,15 @@ const WORKFLOW_STEPS: Array<{
     id: "deploy",
     title: "Deploy to Supabase",
     description: "Deploy your schema to Supabase project",
-    icon: SupabaseLogoMark,
+    icon: Cloud, // Using Cloud icon instead of SupabaseLogoMark to avoid type mismatch
     estimatedTime: "3-5 min",
+  },
+  {
+    id: "seed",
+    title: "Seed Data",
+    description: "Upload CSV files to populate your tables",
+    icon: Upload,
+    estimatedTime: "5-15 min",
   },
 ];
 
@@ -253,6 +264,50 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
   });
 
   const [showWelcome, setShowWelcome] = useState(true);
+  const [showCelebration, setShowCelebration] = useState(false);
+
+  // Calculate overall progress
+  const overallProgress =
+    (state.completedSteps.size / WORKFLOW_STEPS.length) * 100;
+
+  // Celebration function
+  const triggerCelebration = useCallback(() => {
+    setShowCelebration(true);
+    // Auto-hide celebration after 5 seconds
+    setTimeout(() => setShowCelebration(false), 5000);
+  }, []);
+
+  // Watch for 100% completion (only trigger once)
+  const [hasTriggeredCelebration, setHasTriggeredCelebration] = useState(false);
+
+  useEffect(() => {
+    if (
+      overallProgress === 100 &&
+      !hasTriggeredCelebration &&
+      !showCelebration
+    ) {
+      setHasTriggeredCelebration(true);
+      // Small delay to let the progress bar animate to 100%
+      setTimeout(() => triggerCelebration(), 300);
+    }
+  }, [
+    overallProgress,
+    hasTriggeredCelebration,
+    showCelebration,
+    triggerCelebration,
+  ]);
+
+  const updateState = useCallback((updates: Partial<WorkflowState>) => {
+    setState((prev) => ({ ...prev, ...updates }));
+  }, []);
+
+  // Load project data from localStorage on mount
+  useEffect(() => {
+    const projectData = ProjectStorage.retrieve();
+    if (projectData) {
+      updateState({ projectData });
+    }
+  }, [updateState]);
 
   // Add OAuth state management
   const [oauthState, setOauthState] = useState<OAuthState>({
@@ -267,14 +322,6 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
   }, []);
 
   const oauth = getSupabaseOAuth();
-
-  // Calculate overall progress
-  const overallProgress =
-    (state.completedSteps.size / WORKFLOW_STEPS.length) * 100;
-
-  const updateState = useCallback((updates: Partial<WorkflowState>) => {
-    setState((prev) => ({ ...prev, ...updates }));
-  }, []);
 
   const markStepComplete = useCallback((step: WorkflowStep) => {
     setState((prev) => ({
@@ -693,13 +740,16 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
   // Handle deployment completion
   const handleDeployComplete = useCallback(
     (result: DeploymentResult) => {
-      updateState({
-        projectData: {
-          projectId: result.projectId || "",
-          projectName: result.projectName || "",
-          dbUrl: result.dbUrl || "",
-        },
-      });
+      const projectData = {
+        projectId: result.projectId || "",
+        projectName: result.projectName || "",
+        dbUrl: result.dbUrl || "",
+      };
+
+      // Store project data in localStorage for persistence
+      ProjectStorage.store(projectData);
+
+      updateState({ projectData });
       markStepComplete("deploy");
     },
     [updateState, markStepComplete]
@@ -724,6 +774,9 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
 
   // Restart workflow
   const restartWorkflow = useCallback(() => {
+    // Clear project data from localStorage
+    ProjectStorage.clear();
+
     setState({
       currentStep: "upload",
       csvResults: [],
@@ -735,6 +788,8 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
       selectedProject: undefined,
     });
     setShowWelcome(false);
+    setShowCelebration(false);
+    setHasTriggeredCelebration(false);
   }, []);
 
   const getStepStatus = (stepId: WorkflowStep) => {
@@ -772,7 +827,10 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
       <div className="flex-1 w-full max-w-4xl mx-auto p-6">
         <div className="text-center space-y-6">
           <div className="space-y-2">
-            <h1 className="text-4xl font-bold">Welcome to Dreamschema</h1>
+            <h1 className="text-2xl font-bold flex items-center justify-center gap-2">
+              CSV <ArrowRight className="size-5" /> to{" "}
+              <ArrowRight className="size-5" /> Supabase
+            </h1>
             <p className="text-xl text-muted-foreground">
               Transform your CSV files into production-ready Postgres schemas
               with AI
@@ -784,7 +842,7 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
             <Card className="max-w-2xl mx-auto">
               <CardContent className="py-4">
                 <div className="flex items-center justify-center gap-2 text-green-600">
-                  <CheckCircle2 className="h-5 w-5" />
+                  <SupabaseLogoMark />
                   <span className="font-medium">Connected to Supabase</span>
                   {oauthState.user?.email && (
                     <span className="text-sm text-muted-foreground">
@@ -869,9 +927,9 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                 onClick={() => oauth.disconnect()}
                 variant="outline"
                 size="lg"
-                className="gap-2 text-red-600 hover:text-red-700"
+                className="gap-2 text-red-600 hover:text-red-700 hover:bg-red-500/10"
               >
-                <SupabaseLogoMark />
+                <SupabaseLogoMarkRed />
                 Disconnect Supabase
               </Button>
             )}
@@ -1550,6 +1608,15 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
 
           {state.currentStep === "deploy" && (
             <div className="space-y-6 grow flex flex-col">
+              {state.completedSteps.has("deploy") && state.projectData && (
+                <div className="flex items-center gap-2 justify-end">
+                  <Button onClick={() => goToStep("seed")} className="gap-2">
+                    <Upload className="h-4 w-4" />
+                    Continue to Data Seeding
+                  </Button>
+                </div>
+              )}
+
               <Card className="grow flex flex-col">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
@@ -1590,11 +1657,131 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
               </Card>
             </div>
           )}
+
+          {state.currentStep === "seed" &&
+            state.generatedSchema &&
+            state.projectData && (
+              <Card className="grow flex flex-col">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Upload className="h-5 w-5" />
+                    Seed Data
+                  </CardTitle>
+                  <p className="text-muted-foreground">
+                    Upload CSV files to populate your database tables with
+                    actual data.
+                  </p>
+                </CardHeader>
+                <CardContent className="grow flex flex-col">
+                  <DataSeedingInterface
+                    schema={state.generatedSchema}
+                    projectId={state.projectData.projectId}
+                    userEmail={user.email || null}
+                    onSeedingComplete={(result) => {
+                      if (result.success) {
+                        console.log(
+                          "Seeding completed successfully:",
+                          result.statistics
+                        );
+                        markStepComplete("seed");
+                      }
+                    }}
+                    onSeedingProgress={(progress) => {
+                      console.log("Seeding progress:", progress);
+                      // Could update UI with seeding progress
+                    }}
+                    className="grow"
+                  />
+                </CardContent>
+              </Card>
+            )}
         </div>
       </div>
 
       {/* Global Feedback Manager */}
       <FeedbackManager />
+
+      {/* Celebration Modal */}
+      {showCelebration && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm">
+          <div className="relative">
+            {/* Confetti Animation */}
+            <div className="absolute inset-0 pointer-events-none overflow-hidden">
+              <style>{`
+                @keyframes confetti-fall {
+                  0% {
+                    transform: translateY(-10px) rotate(0deg);
+                    opacity: 1;
+                  }
+                  100% {
+                    transform: translateY(calc(100vh + 20px)) rotate(360deg);
+                    opacity: 0;
+                  }
+                }
+              `}</style>
+              {Array.from({ length: 50 }, (_, i) => (
+                <div
+                  key={i}
+                  className="absolute w-2 h-2 rounded-full"
+                  style={{
+                    left: `${Math.random() * 100}%`,
+                    top: "-10px",
+                    backgroundColor: [
+                      "#3CCE8E",
+                      "#10b981",
+                      "#00623A",
+                      "#4D8B70",
+                      "#90E2B9",
+                      "#06b6d4",
+                    ][Math.floor(Math.random() * 6)],
+                    animation: `confetti-fall ${
+                      2 + Math.random() * 3
+                    }s linear ${Math.random() * 2}s infinite`,
+                    transform: `rotate(${Math.random() * 360}deg)`,
+                  }}
+                />
+              ))}
+            </div>
+
+            {/* Celebration Card */}
+            <Card className="mx-4 w-full max-w-md text-center">
+              <CardContent className="p-8">
+                <div className="mb-4">
+                  <CheckCircle2 className="h-16 w-16 text-green-600 mx-auto animate-pulse" />
+                </div>
+                <h2 className="text-2xl font-bold mb-2">🎉 Congratulations!</h2>
+                <p className="text-muted-foreground mb-4">
+                  You&apos;ve successfully completed your entire database schema
+                  workflow!
+                </p>
+                <div className="space-y-2 mb-6">
+                  <p className="text-sm font-medium">✅ Schema Generated</p>
+                  <p className="text-sm font-medium">✅ Optimized & Designed</p>
+                  <p className="text-sm font-medium">✅ Deployed to Supabase</p>
+                  <p className="text-sm font-medium">✅ Data Seeded</p>
+                </div>
+                <div className="flex gap-2 justify-center">
+                  <Button
+                    onClick={() => setShowCelebration(false)}
+                    className="gap-2"
+                  >
+                    <Eye className="h-4 w-4" />
+                    View Project
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={restartWorkflow}
+                    className="gap-2"
+                  >
+                    <Plus className="h-4 w-4" />
+                    New Project
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

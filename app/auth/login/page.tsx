@@ -4,8 +4,22 @@ import { createClient } from "@/lib/supabase/server";
 
 export default async function Page() {
   const supabase = await createClient();
-  const { data: user } = await supabase.auth.getUser();
-  if (user) {
+
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+
+  // Debug logging (remove in production)
+  console.log(
+    "Login page - User:",
+    user?.id ? "authenticated" : "not authenticated"
+  );
+  console.log("Login page - Error:", error?.message || "none");
+
+  // If we have a user and no error, redirect to dashboard
+  if (user && !error) {
+    console.log("Redirecting authenticated user to dashboard");
     redirect("/dashboard");
   }
 

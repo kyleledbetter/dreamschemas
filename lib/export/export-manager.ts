@@ -2,7 +2,7 @@
 
 import { generateMigrations, type MigrationOptions } from '../supabase/migration-formatter';
 import { TypeGenerator } from '../supabase/type-generator';
-import type { DatabaseSchema, Table, Column } from '../../types/schema.types';
+import type { DatabaseSchema, Table, Column, Relationship } from '../../types/schema.types';
 
 export interface ExportFormat {
   id: string;
@@ -27,7 +27,7 @@ export interface ExportOptions {
   indentation?: 'spaces' | 'tabs';
   spacesCount?: number;
   lineEnding?: 'lf' | 'crlf';
-  customOptions?: Record<string, any>;
+  customOptions?: Record<string, unknown>;
 }
 
 export interface ExportResult {
@@ -49,6 +49,30 @@ export interface ExportResult {
     };
     options: ExportOptions;
   };
+}
+
+// Type definitions for JSON Schema
+interface JSONSchemaProperty {
+  type: string;
+  format?: string;
+  maxLength?: number;
+  description?: string;
+}
+
+interface JSONTableSchema {
+  type: string;
+  description?: string;
+  properties: Record<string, JSONSchemaProperty>;
+  required?: string[];
+}
+
+interface JSONSchema {
+  $schema: string;
+  title: string;
+  description: string;
+  type: string;
+  properties: Record<string, { $ref: string }>;
+  definitions: Record<string, JSONTableSchema>;
 }
 
 /**
@@ -315,10 +339,10 @@ export class ExportManager {
         return this.generatePostgreSQLDDL(schema, options);
       
       case 'prisma-schema':
-        return this.generatePrismaSchema(schema, options);
+        return this.generatePrismaSchema(schema);
       
       case 'drizzle-schema':
-        return this.generateDrizzleSchema(schema, options);
+        return this.generateDrizzleSchema(schema);
       
       case 'typescript-types':
         return this.generateTypeScriptTypes(schema, options);
@@ -327,31 +351,31 @@ export class ExportManager {
         return this.generateSupabaseTypes(schema, options);
       
       case 'zod-schemas':
-        return this.generateZodSchemas(schema, options);
+        return this.generateZodSchemas(schema);
       
       case 'markdown-docs':
-        return this.generateMarkdownDocs(schema, options);
+        return this.generateMarkdownDocs(schema);
       
       case 'html-docs':
-        return this.generateHTMLDocs(schema, options);
+        return this.generateHTMLDocs(schema);
       
       case 'json-schema':
-        return this.generateJSONSchema(schema, options);
+        return this.generateJSONSchema(schema);
       
       case 'dbml':
-        return this.generateDBML(schema, options);
+        return this.generateDBML(schema);
       
       case 'plantuml':
-        return this.generatePlantUML(schema, options);
+        return this.generatePlantUML(schema);
       
       case 'mermaid':
-        return this.generateMermaid(schema, options);
+        return this.generateMermaid(schema);
       
       case 'docker-compose':
         return this.generateDockerCompose(schema, options);
       
       case 'kubernetes-manifest':
-        return this.generateKubernetesManifest(schema, options);
+        return this.generateKubernetesManifest(schema);
       
       default:
         throw new Error(`Export format not implemented: ${format.id}`);
@@ -411,7 +435,6 @@ export class ExportManager {
    */
   private static generatePrismaSchema(
     schema: DatabaseSchema,
-    options: ExportOptions
   ): { filename: string; content: string; mimeType: string }[] {
     let content = `// This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
@@ -429,7 +452,7 @@ datasource db {
 
     // Generate models for each table
     schema.tables.forEach(table => {
-      content += this.generatePrismaModel(table, schema, options);
+      content += this.generatePrismaModel(table);
       content += '\n';
     });
 
@@ -445,7 +468,6 @@ datasource db {
    */
   private static generateDrizzleSchema(
     schema: DatabaseSchema,
-    options: ExportOptions
   ): { filename: string; content: string; mimeType: string }[] {
     let content = `import { pgTable, uuid, varchar, text, integer, bigint, decimal, boolean, timestamp, jsonb, index, primaryKey } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
@@ -454,7 +476,7 @@ import { relations } from 'drizzle-orm';
 
     // Generate table definitions
     schema.tables.forEach(table => {
-      content += this.generateDrizzleTable(table, options);
+      content += this.generateDrizzleTable(table);
       content += '\n';
     });
 
@@ -487,11 +509,11 @@ import { relations } from 'drizzle-orm';
     schema: DatabaseSchema,
     options: ExportOptions
   ): { filename: string; content: string; mimeType: string }[] {
-    const typeGenerator = new TypeGenerator();
-    const types = typeGenerator.generateTypes(schema, {
+    const typeGenerator = new TypeGenerator(schema, {
       format: 'typescript',
       includeComments: options.includeComments ?? true,
     });
+    const types = typeGenerator.generateTypes();
 
     return types.map(type => ({
       filename: type.filename || 'types.ts',
@@ -507,11 +529,11 @@ import { relations } from 'drizzle-orm';
     schema: DatabaseSchema,
     options: ExportOptions
   ): { filename: string; content: string; mimeType: string }[] {
-    const typeGenerator = new TypeGenerator();
-    const types = typeGenerator.generateTypes(schema, {
+    const typeGenerator = new TypeGenerator(schema, {
       format: 'supabase',
       includeComments: options.includeComments ?? true,
     });
+    const types = typeGenerator.generateTypes();
 
     return types.map(type => ({
       filename: type.filename || 'database.types.ts',
@@ -525,14 +547,13 @@ import { relations } from 'drizzle-orm';
    */
   private static generateZodSchemas(
     schema: DatabaseSchema,
-    options: ExportOptions
   ): { filename: string; content: string; mimeType: string }[] {
     let content = `import { z } from 'zod';
 
 `;
 
     schema.tables.forEach(table => {
-      content += this.generateZodSchema(table, options);
+      content += this.generateZodSchema(table);
       content += '\n';
     });
 
@@ -548,7 +569,6 @@ import { relations } from 'drizzle-orm';
    */
   private static generateMarkdownDocs(
     schema: DatabaseSchema,
-    options: ExportOptions
   ): { filename: string; content: string; mimeType: string }[] {
     let content = `# ${schema.name} Database Schema
 
@@ -569,7 +589,7 @@ This document describes the database schema for ${schema.name}.
 `;
 
     schema.tables.forEach(table => {
-      content += this.generateTableMarkdown(table, options);
+      content += this.generateTableMarkdown(table);
       content += '\n';
     });
 
@@ -592,7 +612,6 @@ This document describes the database schema for ${schema.name}.
    */
   private static generateHTMLDocs(
     schema: DatabaseSchema,
-    options: ExportOptions
   ): { filename: string; content: string; mimeType: string }[] {
     const content = `<!DOCTYPE html>
 <html lang="en">
@@ -617,7 +636,7 @@ This document describes the database schema for ${schema.name}.
 </head>
 <body>
     <div class="container">
-        ${this.generateHTMLContent(schema, options)}
+        ${this.generateHTMLContent(schema)}
     </div>
 </body>
 </html>`;
@@ -633,10 +652,9 @@ This document describes the database schema for ${schema.name}.
    * Generate JSON Schema
    */
   private static generateJSONSchema(
-    schema: DatabaseSchema,
-    options: ExportOptions
+    schema: DatabaseSchema
   ): { filename: string; content: string; mimeType: string }[] {
-    const jsonSchema = {
+    const jsonSchema: JSONSchema = {
       $schema: 'http://json-schema.org/draft-07/schema#',
       title: schema.name,
       description: `Database schema for ${schema.name}`,
@@ -665,8 +683,7 @@ This document describes the database schema for ${schema.name}.
    * Generate DBML
    */
   private static generateDBML(
-    schema: DatabaseSchema,
-    options: ExportOptions
+    schema: DatabaseSchema
   ): { filename: string; content: string; mimeType: string }[] {
     let content = `Project ${schema.name} {\n  database_type: 'PostgreSQL'\n  Note: '${schema.name} database schema'\n}\n\n`;
 
@@ -697,8 +714,7 @@ This document describes the database schema for ${schema.name}.
    * Generate PlantUML
    */
   private static generatePlantUML(
-    schema: DatabaseSchema,
-    options: ExportOptions
+    schema: DatabaseSchema
   ): { filename: string; content: string; mimeType: string }[] {
     let content = `@startuml ${schema.name}
 !theme plain
@@ -738,8 +754,7 @@ This document describes the database schema for ${schema.name}.
    * Generate Mermaid diagram
    */
   private static generateMermaid(
-    schema: DatabaseSchema,
-    options: ExportOptions
+    schema: DatabaseSchema
   ): { filename: string; content: string; mimeType: string }[] {
     let content = `erDiagram\n`;
 
@@ -828,8 +843,7 @@ volumes:
    * Generate Kubernetes manifest
    */
   private static generateKubernetesManifest(
-    schema: DatabaseSchema,
-    options: ExportOptions
+    schema: DatabaseSchema
   ): { filename: string; content: string; mimeType: string }[] {
     const appName = schema.name.toLowerCase().replace(/\s+/g, '-');
     
@@ -901,7 +915,7 @@ spec:
   }
 
   // Helper methods for specific format generation
-  private static generatePrismaModel(table: Table, schema: DatabaseSchema, options: ExportOptions): string {
+  private static generatePrismaModel(table: Table): string {
     let content = `model ${this.toPascalCase(table.name)} {\n`;
     
     table.columns.forEach(column => {
@@ -919,7 +933,7 @@ spec:
     return content;
   }
 
-  private static generateDrizzleTable(table: Table, options: ExportOptions): string {
+  private static generateDrizzleTable(table: Table): string {
     const tableName = `${table.name}Table`;
     let content = `export const ${tableName} = pgTable('${table.name}', {\n`;
     
@@ -932,7 +946,7 @@ spec:
     return content;
   }
 
-  private static generateZodSchema(table: Table, options: ExportOptions): string {
+  private static generateZodSchema(table: Table): string {
     const schemaName = `${this.toPascalCase(table.name)}Schema`;
     let content = `export const ${schemaName} = z.object({\n`;
     
@@ -1066,7 +1080,7 @@ spec:
   }
 
   // Additional helper methods for generating table documentation, HTML content, etc.
-  private static generateTableMarkdown(table: Table, options: ExportOptions): string {
+  private static generateTableMarkdown(table: Table): string {
     let content = `### ${table.name}\n\n`;
     
     if (table.comment) {
@@ -1084,7 +1098,7 @@ spec:
     return content;
   }
 
-  private static generateHTMLContent(schema: DatabaseSchema, options: ExportOptions): string {
+  private static generateHTMLContent(schema: DatabaseSchema): string {
     let content = `
         <div class="header">
             <h1>${schema.name}</h1>
@@ -1139,8 +1153,8 @@ spec:
     return content;
   }
 
-  private static generateJSONTableSchema(table: Table): any {
-    const properties: any = {};
+  private static generateJSONTableSchema(table: Table): JSONTableSchema {
+    const properties: Record<string, JSONSchemaProperty> = {};
     const required: string[] = [];
 
     table.columns.forEach(column => {
@@ -1150,17 +1164,27 @@ spec:
       }
     });
 
-    return {
+    const result: JSONTableSchema = {
       type: 'object',
-      description: table.comment,
       properties,
-      required: required.length > 0 ? required : undefined,
     };
+
+    if (table.comment) {
+      result.description = table.comment;
+    }
+
+    if (required.length > 0) {
+      result.required = required;
+    }
+
+    return result;
   }
 
-  private static columnToJSONSchema(column: Column): any {
+  private static columnToJSONSchema(column: Column): JSONSchemaProperty {
     const baseType = column.type.toLowerCase();
-    let schema: any = {};
+    const schema: JSONSchemaProperty = {
+      type: 'string', // default type
+    };
 
     switch (baseType) {
       case 'uuid':
@@ -1227,7 +1251,7 @@ spec:
     return content;
   }
 
-  private static generateDrizzleRelations(table: Table, relations: any[]): string {
+  private static generateDrizzleRelations(table: Table, relations: Relationship[]): string {
     const relationName = `${table.name}Relations`;
     let content = `export const ${relationName} = relations(${table.name}Table, ({ one, many }) => ({\n`;
     
