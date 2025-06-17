@@ -262,131 +262,6 @@ class CSVProcessor {
   }
 
   /**
-   * Quick chunk processing optimized for speed
-   */
-  private async processChunkDataQuick(chunkData: any[]): Promise<void> {
-    if (!chunkData || chunkData.length === 0) return;
-    
-    const schema = this.request.schema;
-    
-    // Process ALL tables, but prioritize main tables first
-    const sortedTables = [...schema.tables].sort((a, b) => {
-      const aIsMain = a.name === 'properties' || a.name === 'permits';
-      const bIsMain = b.name === 'properties' || b.name === 'permits';
-      if (aIsMain && !bIsMain) return -1;
-      if (!aIsMain && bIsMain) return 1;
-      return 0;
-    });
-    
-    // Process each table
-    for (const table of sortedTables) {
-      console.log(\`Quick processing \${chunkData.length} rows for table: \${table.name}\`);
-      
-      try {
-        // Filter data relevant to this table (if it has table-specific columns)
-        const relevantData = this.filterDataForTable(chunkData, table);
-        if (relevantData.length === 0) {
-          console.log(\`No relevant data for table \${table.name}, skipping\`);
-          continue;
-        }
-        
-        // Enhanced mapping with better column matching
-        const insertData = relevantData.map(row => {
-          const mapped: any = {
-            id: crypto.randomUUID(),
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          };
-          
-          // Smart column mapping with fuzzy matching
-          table.columns?.forEach((col: any) => {
-            if (!['id', 'created_at', 'updated_at'].includes(col.name)) {
-              // Try multiple ways to find the CSV column
-              const csvValue = this.findCsvValue(row, col.name);
-              const value = String(csvValue || '').trim();
-              
-              if (csvValue !== undefined) {
-                console.log(\`📋 Mapping \${col.name} from CSV "\${csvValue}" -> DB value\`);
-              }
-              
-              // Robust type conversion with empty value handling  
-              const colType = (col.type || '').toLowerCase();
-              if (colType.includes('integer') || colType.includes('bigint') || colType.includes('int')) {
-                if (value === '' || value === 'null' || value === 'NULL') {
-                  mapped[col.name] = null;
-                } else {
-                  const parsed = parseInt(value);
-                  mapped[col.name] = isNaN(parsed) ? null : parsed;
-                }
-              } else if (colType.includes('numeric') || colType.includes('decimal') || colType.includes('real') || colType.includes('double')) {
-                if (value === '' || value === 'null' || value === 'NULL') {
-                  mapped[col.name] = null;
-                } else {
-                  const parsed = parseFloat(value);
-                  mapped[col.name] = isNaN(parsed) ? null : parsed;
-                }
-              } else if (colType.includes('boolean') || colType.includes('bool')) {
-                if (value === '' || value === 'null' || value === 'NULL') {
-                  mapped[col.name] = null;
-                } else {
-                  mapped[col.name] = ['true', '1', 'yes', 'y', 't'].includes(value.toLowerCase());
-                }
-              } else if (colType.includes('date') || colType.includes('timestamp')) {
-                if (value === '' || value === 'null' || value === 'NULL') {
-                  mapped[col.name] = null;
-                } else {
-                  // Try to parse date, fallback to null if invalid
-                  const date = new Date(value);
-                  mapped[col.name] = isNaN(date.getTime()) ? null : date.toISOString();
-                }
-              } else {
-                // Text/varchar fields
-                if (value === 'null' || value === 'NULL') {
-                  mapped[col.name] = null;
-                } else {
-                  mapped[col.name] = value.substring(0, 255); // Truncate long strings
-                }
-              }
-            }
-          });
-          
-          return mapped;
-        });
-        
-        // Only insert if we have actual data (not just id/timestamps)
-        const hasData = insertData.some(row => 
-          Object.keys(row).some(key => 
-            !['id', 'created_at', 'updated_at'].includes(key) && row[key] !== null
-          )
-        );
-        
-        if (!hasData) {
-          console.log(\`No meaningful data for \${table.name}, skipping insert\`);
-          continue;
-        }
-        
-        // Batch insert with error handling
-        const { error } = await this.supabaseClient
-          .from(table.name)
-          .insert(insertData);
-          
-        if (error) {
-          console.log(\`❌ Insert error for \${table.name}:\`, error.message);
-          console.log(\`📋 Sample data:\`, JSON.stringify(insertData[0], null, 2));
-          this.progress.failedRows += insertData.length;
-        } else {
-          console.log(\`✅ Successfully inserted \${insertData.length} rows into \${table.name}\`);
-          this.progress.successfulRows = (this.progress.successfulRows || 0) + insertData.length;
-        }
-        
-      } catch (error) {
-        console.log(\`Error processing table \${table.name}:\`, error.message);
-        this.progress.failedRows += chunkData.length;
-      }
-    }
-  }
-
-  /**
    * Smart CSV column value finder with fuzzy matching
    */
   private findCsvValue(row: any, dbColumnName: string): any {
@@ -429,129 +304,424 @@ class CSVProcessor {
   }
 
   /**
-   * Filter data relevant to a specific table
+   * Enhanced column mapping with better schema intelligence
+   */
+  private mapColumnValue(csvValue: any, column: any, csvRow: any): any {
+    if (csvValue === undefined || csvValue === null || csvValue === '') {
+      return column.nullable ? null : this.getDefaultValue(column);
+    }
+
+    const value = String(csvValue).trim();
+    
+    // Handle explicit null values
+    if (['null', 'NULL', 'N/A', 'n/a', 'None', 'NONE'].includes(value)) {
+      return column.nullable ? null : this.getDefaultValue(column);
+    }
+
+    const colType = (column.type || '').toLowerCase();
+    
+    try {
+      // Enhanced type conversion with better error handling
+      if (colType.includes('uuid')) {
+        // Generate UUID for ID columns, or try to parse if provided
+        if (column.name === 'id' || column.name.endsWith('_id')) {
+          return this.isValidUUID(value) ? value : crypto.randomUUID();
+        }
+        return this.isValidUUID(value) ? value : crypto.randomUUID();
+      }
+      
+      else if (colType.includes('integer') || colType.includes('bigint') || colType.includes('int')) {
+        const parsed = parseInt(value.replace(/[,$]/g, '')); // Remove commas and dollar signs
+        return isNaN(parsed) ? (column.nullable ? null : 0) : parsed;
+      }
+      
+      else if (colType.includes('numeric') || colType.includes('decimal') || colType.includes('real') || colType.includes('double')) {
+        const parsed = parseFloat(value.replace(/[,$]/g, ''));
+        return isNaN(parsed) ? (column.nullable ? null : 0) : parsed;
+      }
+      
+      else if (colType.includes('boolean') || colType.includes('bool')) {
+        const lowerValue = value.toLowerCase();
+        const truthyValues = ['true', '1', 'yes', 'y', 't', 'on', 'enabled', 'active'];
+        const falsyValues = ['false', '0', 'no', 'n', 'f', 'off', 'disabled', 'inactive'];
+        
+        if (truthyValues.includes(lowerValue)) return true;
+        if (falsyValues.includes(lowerValue)) return false;
+        return column.nullable ? null : false;
+      }
+      
+      else if (colType.includes('date') || colType.includes('timestamp')) {
+        return this.parseDateTime(value, colType.includes('timestamp'));
+      }
+      
+      else if (colType.includes('jsonb') || colType.includes('json')) {
+        try {
+          return typeof csvValue === 'object' ? csvValue : JSON.parse(value);
+        } catch {
+          return column.nullable ? null : {};
+        }
+      }
+      
+      else {
+        // Text/varchar fields with length constraints
+        let textValue = value;
+        if (column.length && textValue.length > column.length) {
+          textValue = textValue.substring(0, column.length);
+        }
+        return textValue;
+      }
+    } catch (error) {
+      console.warn(\`Error converting value "\${value}" for column \${column.name}:\`, error);
+      return column.nullable ? null : this.getDefaultValue(column);
+    }
+  }
+
+  /**
+   * Get default value for a column based on its type
+   */
+  private getDefaultValue(column: any): any {
+    const colType = (column.type || '').toLowerCase();
+    
+    if (colType.includes('uuid')) return crypto.randomUUID();
+    if (colType.includes('integer') || colType.includes('bigint') || colType.includes('int')) return 0;
+    if (colType.includes('numeric') || colType.includes('decimal') || colType.includes('real') || colType.includes('double')) return 0;
+    if (colType.includes('boolean') || colType.includes('bool')) return false;
+    if (colType.includes('date') || colType.includes('timestamp')) return new Date().toISOString();
+    if (colType.includes('jsonb') || colType.includes('json')) return {};
+    
+    return ''; // Default for text fields
+  }
+
+  /**
+   * Enhanced date/time parsing
+   */
+  private parseDateTime(value: string, includeTime: boolean = false): string | null {
+    try {
+      // Common date formats to try
+      const formats = [
+        // ISO formats
+        /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}/, // ISO datetime
+        /^\\d{4}-\\d{2}-\\d{2}/, // ISO date
+        
+        // US formats
+        /^\\d{1,2}\\/\\d{1,2}\\/\\d{4}/, // MM/DD/YYYY
+        /^\\d{1,2}-\\d{1,2}-\\d{4}/, // MM-DD-YYYY
+        
+        // European formats
+        /^\\d{1,2}\\/\\d{1,2}\\/\\d{4}/, // DD/MM/YYYY (ambiguous with US)
+        /^\\d{1,2}-\\d{1,2}-\\d{4}/, // DD-MM-YYYY (ambiguous with US)
+        
+        // Other common formats
+        /^\\d{4}\\/\\d{1,2}\\/\\d{1,2}/, // YYYY/MM/DD
+        /^\\d{1,2}\\s\\w+\\s\\d{4}/, // DD Month YYYY
+      ];
+
+      let parsedDate: Date | null = null;
+
+      // Try parsing with native Date constructor first
+      const nativeDate = new Date(value);
+      if (!isNaN(nativeDate.getTime())) {
+        parsedDate = nativeDate;
+      } else {
+        // Try manual parsing for common formats
+        if (value.includes('/')) {
+          const parts = value.split('/');
+          if (parts.length === 3) {
+            // Assume MM/DD/YYYY for US format, but could be DD/MM/YYYY
+            const [p1, p2, p3] = parts.map(p => parseInt(p));
+            if (p1 <= 12 && p2 <= 31) {
+              // Likely MM/DD/YYYY
+              parsedDate = new Date(p3, p1 - 1, p2);
+            } else if (p1 <= 31 && p2 <= 12) {
+              // Likely DD/MM/YYYY
+              parsedDate = new Date(p3, p2 - 1, p1);
+            }
+          }
+        }
+      }
+
+      if (!parsedDate || isNaN(parsedDate.getTime())) {
+        return null;
+      }
+
+      return includeTime ? parsedDate.toISOString() : parsedDate.toISOString().split('T')[0];
+    } catch (error) {
+      console.warn(\`Failed to parse date: \${value}\`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Check if a string is a valid UUID
+   */
+  private isValidUUID(str: string): boolean {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    return uuidRegex.test(str);
+  }
+
+  /**
+   * Enhanced table data filtering with schema intelligence
    */
   private filterDataForTable(data: any[], table: any): any[] {
     const tableName = table.name.toLowerCase();
     
-    // Properties table gets all CSV rows
-    if (tableName === 'properties') {
-      return data;
+    // For tables with foreign key relationships, we need to be smarter about filtering
+    const hasForeignKeys = table.columns?.some((col: any) => 
+      col.name.endsWith('_id') && col.name !== 'id'
+    );
+
+    // If table has schema-defined columns that map to CSV columns, include all data
+    const hasDirectMapping = table.columns?.some((col: any) => 
+      col.originalCSVColumn || this.findCsvValue(data[0] || {}, col.name) !== undefined
+    );
+
+    if (hasDirectMapping) {
+      return data; // This table has direct CSV column mappings
     }
-    
-    // Permit statuses - extract unique status values
-    if (tableName === 'permit_statuses') {
-      return this.extractUniqueValues(data, [
-        'permit_status', 'status', 'initial_status', 'latest_status',
-        'application_status', 'current_status'
-      ], 'status');
+
+    // For lookup tables, extract unique values
+    if (this.isLookupTable(table)) {
+      return this.extractLookupValues(data, table);
     }
-    
-    // Builders - extract unique builder names
-    if (tableName === 'builders') {
-      return this.extractUniqueValues(data, [
-        'builder', 'builder_name', 'contractor', 'contractor_name',
-        'company', 'business_name'
-      ], 'name');
+
+    // For junction tables (many-to-many), handle relationship data
+    if (this.isJunctionTable(table)) {
+      return this.extractJunctionData(data, table);
     }
-    
-    // Permits - return all data but will need property_id matching later
-    if (tableName === 'permits') {
-      return data.filter(row => {
-        // Only include rows that have permit-related data
-        return this.hasPermitData(row);
-      });
-    }
-    
-    // Sales - return all data but will need property_id matching later
-    if (tableName === 'sales') {
-      return data.filter(row => {
-        // Only include rows that have sales-related data
-        return this.hasSalesData(row);
-      });
-    }
-    
-    // Property characteristics - return all data, will match 1:1 with properties
-    if (tableName === 'property_characteristics') {
-      return data.filter(row => {
-        // Only include rows that have characteristic data
-        return this.hasCharacteristicData(row);
-      });
-    }
-    
-    // Default: return empty for unknown tables
-    return [];
+
+    // Default: return all data for main entity tables
+    return data;
   }
-  
+
+  /**
+   * Check if a table is a lookup/reference table
+   */
+  private isLookupTable(table: any): boolean {
+    const tableName = table.name.toLowerCase();
+    const lookupPatterns = [
+      'status', 'type', 'category', 'classification', 'lookup',
+      'reference', 'enum', 'option', 'choice'
+    ];
+    
+    return lookupPatterns.some(pattern => tableName.includes(pattern)) ||
+           (table.columns?.length <= 5 && table.columns?.some((col: any) => 
+             ['name', 'title', 'label', 'value'].includes(col.name.toLowerCase())
+           ));
+  }
+
+  /**
+   * Check if a table is a junction table for many-to-many relationships
+   */
+  private isJunctionTable(table: any): boolean {
+    const foreignKeyCount = table.columns?.filter((col: any) => 
+      col.name.endsWith('_id') && col.name !== 'id'
+    ).length || 0;
+    
+    return foreignKeyCount >= 2 && table.columns?.length <= 6;
+  }
+
   /**
    * Extract unique values for lookup tables
    */
-  private extractUniqueValues(data: any[], csvColumns: string[], targetField: string): any[] {
+  private extractLookupValues(data: any[], table: any): any[] {
     const uniqueValues = new Set<string>();
     
-    // Find values from CSV columns that could populate this lookup table
+    // Find CSV columns that should populate this lookup table
+    const nameColumn = table.columns?.find((col: any) => 
+      ['name', 'title', 'label', 'value'].includes(col.name.toLowerCase())
+    );
+    
+    if (!nameColumn) return [];
+
+    // Look for CSV columns that match this lookup concept
+    const csvColumns = this.findRelatedCSVColumns(data[0] || {}, table.name);
+    
     data.forEach(row => {
       csvColumns.forEach(colName => {
-        const value = this.findCsvValue(row, colName);
+        const value = row[colName];
         if (value && typeof value === 'string' && value.trim() && 
-            value !== 'null' && value !== 'NULL' && value !== '') {
+            !['null', 'NULL', 'N/A', ''].includes(value.trim())) {
           uniqueValues.add(value.trim());
         }
       });
     });
-    
-    // Convert unique values to lookup table rows
-    return Array.from(uniqueValues).map(value => ({
-      [targetField]: value
-    }));
+
+    return Array.from(uniqueValues).map(value => ({ [nameColumn.name]: value }));
   }
-  
+
   /**
-   * Check if row has permit-related data
+   * Find CSV columns related to a table concept
    */
-  private hasPermitData(row: any): boolean {
-    const permitFields = [
-      'permit_number', 'permit_type', 'type', 'description', 
-      'permit_jurisdiction', 'job_value', 'fees', 'applied_date',
-      'issued_date', 'project_type', 'business_name'
-    ];
+  private findRelatedCSVColumns(sampleRow: any, tableName: string): string[] {
+    const csvColumns = Object.keys(sampleRow);
+    const tableNameLower = tableName.toLowerCase();
     
-    return permitFields.some(field => {
-      const value = this.findCsvValue(row, field);
-      return value && value !== '' && value !== 'null';
+    return csvColumns.filter(col => {
+      const colLower = col.toLowerCase();
+      return colLower.includes(tableNameLower) || 
+             tableNameLower.includes(colLower.replace(/[_\\s]/g, ''));
     });
   }
-  
+
   /**
-   * Check if row has sales-related data
+   * Extract junction table data for many-to-many relationships
    */
-  private hasSalesData(row: any): boolean {
-    const salesFields = [
-      'sale_date', 'sale_price', 'loan_amount', 'loan_type',
-      'product_class', 'product_type', 'transaction_type',
-      'delivery_date', 'builder_matched_flag'
-    ];
-    
-    return salesFields.some(field => {
-      const value = this.findCsvValue(row, field);
-      return value && value !== '' && value !== 'null';
-    });
+  private extractJunctionData(data: any[], table: any): any[] {
+    // This would handle complex many-to-many relationship extraction
+    // For now, return empty array as it requires more sophisticated logic
+    return [];
   }
-  
+
   /**
-   * Check if row has property characteristic data
+   * Enhanced chunk processing with schema-driven mapping
    */
-  private hasCharacteristicData(row: any): boolean {
-    const characteristicFields = [
-      'adu', 'bathroom_remodel', 'air_conditioning', 'building_quality',
-      'number_of_bedrooms', 'number_of_baths', 'garage_type_parking',
-      'heating', 'style', 'roof_type', 'foundation', 'exterior_walls'
-    ];
+  private async processChunkDataQuick(chunkData: any[]): Promise<void> {
+    if (!chunkData || chunkData.length === 0) return;
     
-    return characteristicFields.some(field => {
-      const value = this.findCsvValue(row, field);
-      return value && value !== '' && value !== 'null';
-    });
+    const schema = this.request.schema;
+    
+    // Process tables in dependency order (tables with no foreign keys first)
+    const sortedTables = this.sortTablesByDependency(schema.tables);
+    
+    // Track inserted records for foreign key resolution
+    const insertedRecords = new Map<string, Map<string, string>>(); // tableName -> originalId -> newUUID
+    
+    for (const table of sortedTables) {
+      console.log(\`Processing \${chunkData.length} rows for table: \${table.name}\`);
+      
+      try {
+        const relevantData = this.filterDataForTable(chunkData, table);
+        if (relevantData.length === 0) {
+          console.log(\`No relevant data for table \${table.name}, skipping\`);
+          continue;
+        }
+        
+        const insertData = relevantData.map(row => {
+          const mapped: any = {
+            id: crypto.randomUUID(),
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          };
+          
+          // Map each column using enhanced schema-driven approach
+          table.columns?.forEach((col: any) => {
+            if (!['id', 'created_at', 'updated_at'].includes(col.name)) {
+              // Use original CSV column mapping if available
+              const csvColumnName = col.originalCSVColumn || col.name;
+              const csvValue = this.findCsvValue(row, csvColumnName);
+              
+              // Apply enhanced column mapping
+              mapped[col.name] = this.mapColumnValue(csvValue, col, row);
+              
+              // Handle foreign key resolution
+              if (col.name.endsWith('_id') && col.name !== 'id') {
+                mapped[col.name] = this.resolveForeignKey(csvValue, col, insertedRecords);
+              }
+            }
+          });
+          
+          return mapped;
+        });
+        
+        // Only insert if we have meaningful data
+        const hasData = insertData.some(row => 
+          Object.keys(row).some(key => 
+            !['id', 'created_at', 'updated_at'].includes(key) && row[key] !== null && row[key] !== ''
+          )
+        );
+        
+        if (!hasData) {
+          console.log(\`No meaningful data for \${table.name}, skipping insert\`);
+          continue;
+        }
+        
+        // Batch insert with enhanced error handling
+        const { data: insertedData, error } = await this.supabaseClient
+          .from(table.name)
+          .insert(insertData)
+          .select('id'); // Get back the inserted IDs
+          
+        if (error) {
+          console.log(\`❌ Insert error for \${table.name}:\`, error.message);
+          this.progress.failedRows += insertData.length;
+        } else {
+          console.log(\`✅ Successfully inserted \${insertData.length} rows into \${table.name}\`);
+          this.progress.successfulRows = (this.progress.successfulRows || 0) + insertData.length;
+          
+          // Track inserted records for foreign key resolution
+          if (insertedData && insertedData.length > 0) {
+            const recordMap = new Map<string, string>();
+            insertedData.forEach((record: any, index: number) => {
+              const originalRow = relevantData[index];
+              const originalId = originalRow.id || originalRow.ID || index.toString();
+              recordMap.set(originalId, record.id);
+            });
+            insertedRecords.set(table.name, recordMap);
+          }
+        }
+        
+      } catch (error) {
+        console.log(\`Error processing table \${table.name}:\`, error.message);
+        this.progress.failedRows += chunkData.length;
+      }
+    }
+  }
+
+  /**
+   * Sort tables by dependency order (tables with no foreign keys first)
+   */
+  private sortTablesByDependency(tables: any[]): any[] {
+    const sorted: any[] = [];
+    const remaining = [...tables];
+    
+    while (remaining.length > 0) {
+      const independentTables = remaining.filter(table => {
+        const foreignKeys = table.columns?.filter((col: any) => 
+          col.name.endsWith('_id') && col.name !== 'id'
+        ) || [];
+        
+        // Check if all foreign key references are already in sorted array
+        return foreignKeys.every((fk: any) => {
+          const referencedTable = fk.name.replace('_id', '') + 's'; // Simple pluralization
+          return sorted.some(sortedTable => sortedTable.name === referencedTable) ||
+                 !remaining.some(remTable => remTable.name === referencedTable);
+        });
+      });
+      
+      if (independentTables.length === 0) {
+        // Circular dependency or other issue, just add remaining tables
+        sorted.push(...remaining);
+        break;
+      }
+      
+      sorted.push(...independentTables);
+      independentTables.forEach(table => {
+        const index = remaining.indexOf(table);
+        if (index > -1) remaining.splice(index, 1);
+      });
+    }
+    
+    return sorted;
+  }
+
+  /**
+   * Resolve foreign key values using inserted records
+   */
+  private resolveForeignKey(csvValue: any, column: any, insertedRecords: Map<string, Map<string, string>>): string | null {
+    if (!csvValue) return null;
+    
+    // Extract the referenced table name from column name (e.g., user_id -> users)
+    const referencedTableName = column.name.replace('_id', '') + 's'; // Simple pluralization
+    const recordMap = insertedRecords.get(referencedTableName);
+    
+    if (recordMap) {
+      // Try to find the UUID for this CSV value
+      const resolvedId = recordMap.get(String(csvValue));
+      if (resolvedId) return resolvedId;
+    }
+    
+    // If no resolution found, generate a new UUID or return null
+    return this.isValidUUID(String(csvValue)) ? String(csvValue) : crypto.randomUUID();
   }
 
   /**
@@ -900,162 +1070,6 @@ class CSVProcessor {
     }
 
     return record;
-  }
-
-  // Simplified helper methods for chunk processing...
-  private filterDataForTable(data: any[], table: any): any[] {
-    if (!data || data.length === 0) return [];
-    
-    const tableName = table.name.toLowerCase();
-    console.log('[DataSeeder] Filtering data for table:', tableName);
-    
-    // Properties table gets all CSV rows
-    if (tableName === 'properties') {
-      console.log('[DataSeeder] Properties table - returning all', data.length, 'rows');
-      return data;
-    }
-    
-    // Permit statuses - extract unique status values
-    if (tableName === 'permit_statuses') {
-      const uniqueValues = this.extractUniqueValues(data, [
-        'permit_status', 'status', 'initial_status', 'latest_status',
-        'application_status', 'current_status', 'permit_initial_status',
-        'permit_latest_status'
-      ], 'status');
-      console.log('[DataSeeder] Permit statuses - extracted', uniqueValues.length, 'unique values');
-      return uniqueValues;
-    }
-    
-    // Builders - extract unique builder names
-    if (tableName === 'builders') {
-      const uniqueValues = this.extractUniqueValues(data, [
-        'builder', 'builder_name', 'contractor', 'contractor_name',
-        'company', 'business_name', 'permit_business_name'
-      ], 'name');
-      console.log('[DataSeeder] Builders - extracted', uniqueValues.length, 'unique values');
-      return uniqueValues;
-    }
-    
-    // Permits - return rows that have permit-related data
-    if (tableName === 'permits') {
-      const filteredData = data.filter(row => this.hasPermitData(row));
-      console.log('[DataSeeder] Permits - filtered to', filteredData.length + '/' + data.length, 'rows with permit data');
-      return filteredData;
-    }
-    
-    // Sales - return rows that have sales-related data
-    if (tableName === 'sales') {
-      const filteredData = data.filter(row => this.hasSalesData(row));
-      console.log('[DataSeeder] Sales - filtered to', filteredData.length + '/' + data.length, 'rows with sales data');
-      return filteredData;
-    }
-    
-    // Property characteristics - return rows that have characteristic data
-    if (tableName === 'property_characteristics') {
-      const filteredData = data.filter(row => this.hasCharacteristicData(row));
-      console.log('[DataSeeder] Property characteristics - filtered to', filteredData.length + '/' + data.length, 'rows with characteristic data');
-      return filteredData;
-    }
-    
-    // Default: return all data for unknown tables
-    console.log('[DataSeeder] Unknown table', tableName, '- returning all', data.length, 'rows');
-    return data;
-  }
-
-  /**
-   * Extract unique values for lookup tables
-   */
-  private extractUniqueValues(data: any[], csvColumns: string[], targetField: string): any[] {
-    const uniqueValues = new Set<string>();
-    
-    // Find values from CSV columns that could populate this lookup table
-    data.forEach(row => {
-      csvColumns.forEach(colName => {
-        const value = this.findCsvValue(row, colName);
-        if (value && typeof value === 'string' && value.trim() && 
-            value !== 'null' && value !== 'NULL' && value !== '') {
-          uniqueValues.add(value.trim());
-        }
-      });
-    });
-    
-    // Convert unique values to lookup table rows
-    return Array.from(uniqueValues).map(value => ({
-      [targetField]: value
-    }));
-  }
-
-  /**
-   * Find CSV value using fuzzy matching
-   */
-  private findCsvValue(row: any, targetColumn: string): any {
-    // Direct match
-    if (row[targetColumn] !== undefined) {
-      return row[targetColumn];
-    }
-    
-    // Fuzzy matching for common variations
-    const targetLower = targetColumn.toLowerCase();
-    for (const [key, value] of Object.entries(row)) {
-      const keyLower = key.toLowerCase();
-      if (keyLower === targetLower ||
-          keyLower.includes(targetLower) ||
-          targetLower.includes(keyLower) ||
-          keyLower.replace(/[_\s]/g, '') === targetLower.replace(/[_\s]/g, '')) {
-        return value;
-      }
-    }
-    
-    return null;
-  }
-  
-  /**
-   * Check if row has permit-related data
-   */
-  private hasPermitData(row: any): boolean {
-    const permitFields = [
-      'permit_number', 'permit_type', 'type', 'description', 
-      'permit_jurisdiction', 'job_value', 'fees', 'applied_date',
-      'issued_date', 'project_type', 'business_name', 'permit_id'
-    ];
-    
-    return permitFields.some(field => {
-      const value = this.findCsvValue(row, field);
-      return value && value !== '' && value !== 'null';
-    });
-  }
-  
-  /**
-   * Check if row has sales-related data
-   */
-  private hasSalesData(row: any): boolean {
-    const salesFields = [
-      'sale_date', 'sale_price', 'loan_amount', 'loan_type',
-      'product_class', 'product_type', 'transaction_type',
-      'delivery_date', 'builder_matched_flag', 'sales_date', 'price'
-    ];
-    
-    return salesFields.some(field => {
-      const value = this.findCsvValue(row, field);
-      return value && value !== '' && value !== 'null';
-    });
-  }
-  
-  /**
-   * Check if row has property characteristic data
-   */
-  private hasCharacteristicData(row: any): boolean {
-    const characteristicFields = [
-      'adu', 'bathroom_remodel', 'air_conditioning', 'building_quality',
-      'number_of_bedrooms', 'number_of_baths', 'garage_type_parking',
-      'heating', 'style', 'roof_type', 'foundation', 'exterior_walls',
-      'bedrooms', 'bathrooms', 'garage', 'heating_type'
-    ];
-    
-    return characteristicFields.some(field => {
-      const value = this.findCsvValue(row, field);
-      return value && value !== '' && value !== 'null';
-    });
   }
 
   private mapDataToTable(data: any[], table: any): any[] {

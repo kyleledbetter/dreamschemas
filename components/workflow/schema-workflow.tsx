@@ -56,6 +56,7 @@ import type {
   Table,
 } from "@/types/schema.types";
 import { ProjectStorage } from "@/lib/storage/project-storage";
+import { SchemaStorage } from "@/lib/storage/schema-storage";
 import { SupabaseLogoMark, SupabaseLogoMarkRed } from "../supabase-logo";
 
 interface SchemaWorkflowProps {
@@ -301,13 +302,49 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
     setState((prev) => ({ ...prev, ...updates }));
   }, []);
 
-  // Load project data from localStorage on mount
+  // Load project data AND schema data from localStorage on mount
   useEffect(() => {
     const projectData = ProjectStorage.retrieve();
     if (projectData) {
       updateState({ projectData });
     }
+
+    // Load persisted schema data if available
+    const schemaData = SchemaStorage.retrieve();
+    if (schemaData && SchemaStorage.isDataRecent()) {
+      console.log('🔄 Restoring schema data from localStorage:', SchemaStorage.getStorageInfo());
+      
+      // Restore the workflow state with persisted data
+      const newCompletedSteps = new Set<WorkflowStep>();
+      
+      // Mark previous steps as completed based on available data
+      newCompletedSteps.add("upload");
+      newCompletedSteps.add("analyze");
+      
+      // If we have optimization results, mark that as completed too
+      if (schemaData.aiAnalysis) {
+        newCompletedSteps.add("optimize");
+      }
+
+      updateState({
+        csvResults: schemaData.csvResults,
+        generatedSchema: schemaData.schema,
+        completedSteps: newCompletedSteps,
+        currentStep: schemaData.aiAnalysis ? "design" : "optimize", // Resume at appropriate step
+      });
+
+      // Show a notification that data was restored
+      setTimeout(() => {
+        console.log('✅ Previous analysis restored from localStorage');
+        
+        // You could add a toast notification here if you have a toast system
+        // For now, we'll use the existing state to show the restoration
+      }, 1000);
+    }
   }, [updateState]);
+
+  // Check for restored schema and show notification
+  const isSchemaRestored = SchemaStorage.hasStoredSchema() && SchemaStorage.isDataRecent();
 
   // Add OAuth state management
   const [oauthState, setOauthState] = useState<OAuthState>({
@@ -371,8 +408,8 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
         id: generateId(),
         fileName: "uploaded_file.csv",
         headers: result.metadata.headers,
-        data: result.sampleData.map((row) =>
-          result.metadata.headers.map((header) => row[header] || null)
+        data: result.sampleData.map((row: Record<string, any>) =>
+          result.metadata.headers.map((header: string) => row[header] || null)
         ),
         totalRows: result.metadata.totalRows,
         sampledRows: result.sampleData.length,
@@ -404,7 +441,7 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
     []
   );
 
-  // Perform actual AI analysis
+  // Enhanced AI analysis with persistence
   const performAIAnalysis = useCallback(async () => {
     if (!state.csvResults.some((result) => result.isValid)) {
       updateState({ error: "Please upload and validate CSV files first" });
@@ -514,154 +551,60 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                           comment: table.comment || "",
                           position: { x: 0, y: 0 },
                           columns: table.columns.map(
-                            (col): Column => ({
+                            (col: any): Column => ({
                               id: generateId(),
                               name: col.name,
                               type: mapToPostgresType(col.type),
+                              length: col.length,
+                              precision: col.precision,
+                              scale: col.scale,
                               nullable: col.nullable,
-                              length: col.length || 0,
-                              precision: col.precision || 0,
-                              scale: col.scale || 0,
-                              defaultValue: col.defaultValue || "",
+                              defaultValue: col.defaultValue,
                               constraints: col.constraints.map(
-                                (c): ColumnConstraint => {
-                                  const constraintType = mapToConstraintType(c);
-                                  const constraint: ColumnConstraint = {
-                                    type: constraintType,
-                                  };
-
-                                  // Extract constraint values
-                                  if (
-                                    constraintType === "DEFAULT" &&
-                                    c.toLowerCase().startsWith("default ")
-                                  ) {
-                                    constraint.value = c.substring(8).trim(); // Remove "DEFAULT " prefix
-                                  } else if (
-                                    constraintType === "CHECK" &&
-                                    c.toLowerCase().includes("check")
-                                  ) {
-                                    // Extract check condition from "CHECK (condition)" format
-                                    const checkMatch =
-                                      c.match(/check\s*\((.+)\)/i);
-                                    if (checkMatch) {
-                                      constraint.value = checkMatch[1];
-                                    }
-                                  } else if (
-                                    constraintType === "FOREIGN KEY" &&
-                                    c.toLowerCase().includes("references")
-                                  ) {
-                                    // Extract foreign key reference
-                                    const refMatch = c.match(
-                                      /references\s+(\w+)\s*\((\w+)\)/i
-                                    );
-                                    if (refMatch) {
-                                      constraint.referencedTable = refMatch[1];
-                                      constraint.referencedColumn = refMatch[2];
-                                    }
-                                  }
-
-                                  return constraint;
-                                }
+                                (constraint: string): ColumnConstraint => ({
+                                  type: constraint as ConstraintType,
+                                  ...(constraint.includes("REFERENCES") && { value: constraint }),
+                                })
                               ),
-                              comment: col.reasoning || "",
+                              comment: col.reasoning,
                             })
                           ),
-                          indexes: table.indexes.map((idx) => ({
+                          indexes: table.indexes.map((idx: any) => ({
                             id: generateId(),
                             name: idx.name,
                             columns: idx.columns,
                             unique: idx.unique,
+                            type: "BTREE" as const,
                           })),
                         })
                       ),
-                      relationships: analysis.tables.flatMap(
-                        (table: AIAnalysisTable) =>
-                          (table.relationships || []).map(
-                            (rel: AIAnalysisRelationship) => ({
-                              id: generateId(),
-                              name: `${table.name}_${rel.sourceColumn}_fk`,
-                              type: rel.type as
-                                | "one-to-one"
-                                | "one-to-many"
-                                | "many-to-many",
-                              sourceTable: table.name,
-                              sourceColumn: rel.sourceColumn,
-                              targetTable: rel.targetTable,
-                              targetColumn: rel.targetColumn,
-                              onDelete: "CASCADE" as const,
-                              onUpdate: "CASCADE" as const,
-                            })
-                          )
-                      ),
-                      rlsPolicies: analysis.tables.flatMap(
-                        (table: AIAnalysisTable) =>
-                          (table.rlsPolicies || []).map(
-                            (policy: AIAnalysisRLSPolicy) => ({
-                              id: generateId(),
-                              tableName: table.name,
-                              name: policy.name,
-                              command: policy.operation as
-                                | "SELECT"
-                                | "INSERT"
-                                | "UPDATE"
-                                | "DELETE",
-                              using: policy.using || policy.definition || "",
-                              withCheck: policy.with_check ? "" : "",
-                              roles: ["authenticated"],
-                            })
-                          )
-                      ),
+                      relationships: [],
+                      rlsPolicies: [],
                     };
 
-                    // Initialize optimization result with the generated schema
-                    const optimizationResult: SchemaOptimizationResult = {
-                      originalSchema: generatedSchema,
-                      optimizedSchema: generatedSchema,
-                      suggestions: [],
-                      summary: {
-                        totalSuggestions: 0,
-                        criticalIssues: 0,
-                        autoApplicableCount: 0,
-                        estimatedPerformanceGain: 0,
-                        confidenceScore: metadata?.confidence || 85,
-                      },
-                      aiAnalysis: {
-                        reasoning:
-                          "Initial schema generated successfully. Ready for optimization.",
-                        suggestions: [],
-                        tables: generatedSchema.tables.map((table) => ({
-                          name: table.name,
-                          columns: table.columns.map((col) => ({
-                            name: col.name,
-                            type: col.type,
-                            nullable: col.nullable,
-                            length: col.length,
-                            precision: col.precision,
-                            scale: col.scale,
-                            defaultValue: col.defaultValue,
-                            constraints: col.constraints.map((c) => c.type),
-                            reasoning:
-                              col.comment ||
-                              `Column ${col.name} of type ${col.type}`,
-                          })),
-                          relationships: [],
-                          indexes: [],
-                          comment: table.comment,
-                          rlsPolicies: [],
-                        })),
-                        confidence: metadata?.confidence || 0.85,
-                      },
-                    };
+                    // Store schema data in localStorage for persistence
+                    SchemaStorage.store({
+                      schema: generatedSchema,
+                      csvResults: state.csvResults,
+                      aiAnalysis: analysis, // Store raw AI analysis for reference
+                    });
 
                     updateState({
                       generatedSchema,
-                      optimizationResult,
                       isProcessing: false,
-                      analysisProgress: metadata.progress,
+                      analysisProgress: undefined,
+                      error: undefined,
                     });
-
                     markStepComplete("analyze");
-                    setTimeout(() => nextStep(), 1000);
+
+                    // Add delay before auto-advancing to optimize step
+                    setTimeout(() => nextStep(), 1500);
+                  } else {
+                    updateState({
+                      error: event.data.error || "Analysis failed",
+                      isProcessing: false,
+                      analysisProgress: undefined,
+                    });
                   }
                   break;
 
@@ -723,9 +666,12 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
     [updateState, markStepComplete]
   );
 
-  // Handle schema design completion
+  // Enhanced schema design completion with persistence
   const handleDesignComplete = useCallback(
     (schema: DatabaseSchema) => {
+      // Update the stored schema when design is modified
+      SchemaStorage.updateSchema(schema);
+      
       updateState({ generatedSchema: schema });
       markStepComplete("design");
     },
@@ -772,10 +718,11 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
     }
   };
 
-  // Restart workflow
+  // Restart workflow with schema cleanup
   const restartWorkflow = useCallback(() => {
-    // Clear project data from localStorage
+    // Clear both project and schema data from localStorage
     ProjectStorage.clear();
+    SchemaStorage.clear();
 
     setState({
       currentStep: "upload",
@@ -808,8 +755,8 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
       files: state.csvResults.map((result) => ({
         name: `data_${result.metadata.totalRows}.csv`,
         content: result.sampleData
-          .map((row) =>
-            result.metadata.headers.map((header) => row[header]).join(",")
+          .map((row: Record<string, any>) =>
+            result.metadata.headers.map((header: string) => row[header]).join(",")
           )
           .join("\n"),
         type: "text/csv",
@@ -963,6 +910,25 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
     <div className="flex-1 size-full flex flex-col">
       <div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 shrink-0">
         <div className="max-w-7xl mx-auto px-6 py-4">
+          {/* Restored Schema Notification */}
+          {isSchemaRestored && state.generatedSchema && (
+            <Alert className="mb-4 border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950">
+              <CheckCircle2 className="h-4 w-4 text-green-600" />
+              <AlertDescription className="text-green-700 dark:text-green-300">
+                <strong>Schema Restored:</strong> Your previous analysis with {state.generatedSchema.tables.length} tables 
+                has been restored from your last session. You can continue where you left off or start fresh.
+                <Button 
+                  variant="link" 
+                  size="sm" 
+                  onClick={() => SchemaStorage.clear()} 
+                  className="ml-2 h-auto p-0 text-green-600 hover:text-green-700"
+                >
+                  Clear & Start Fresh
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
             <div>

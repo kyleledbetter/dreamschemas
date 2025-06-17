@@ -38,6 +38,7 @@ import {
   Zap,
 } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { SchemaStorage } from "@/lib/storage/schema-storage";
 
 interface DataSeedingInterfaceProps {
   schema: DatabaseSchema;
@@ -52,7 +53,7 @@ interface DataSeedingInterfaceProps {
 }
 
 export function DataSeedingInterface({
-  schema,
+  schema: propSchema,
   projectId,
   userEmail,
   onSeedingComplete,
@@ -73,13 +74,21 @@ export function DataSeedingInterface({
   const [debugInfo, setDebugInfo] = useState<{
     storedProject: ProjectData | null;
     passedProject: string;
+    storedSchema: boolean;
+    schemaInfo: any;
   }>({
     storedProject: null,
     passedProject: projectId,
+    storedSchema: false,
+    schemaInfo: null,
   });
 
   // Get OAuth instance (consistent with migration-deployer)
   const oauth = getSupabaseOAuth();
+
+  // Enhanced schema retrieval with fallback to stored data
+  const schema = SchemaStorage.getSchema(propSchema) || propSchema;
+  const storedSchemaData = SchemaStorage.retrieve();
 
   // Debug project data availability
   const projectData = ProjectStorage.getProjectId(projectId);
@@ -109,12 +118,15 @@ export function DataSeedingInterface({
 
   // No need to subscribe to OAuth state changes since we use oauth.getState() directly
 
-  // Debug project data availability
+  // Debug project data AND schema data availability
   useEffect(() => {
     const storedProject = ProjectStorage.retrieve();
+    const schemaInfo = SchemaStorage.getStorageInfo();
     setDebugInfo({
       storedProject,
       passedProject: projectId,
+      storedSchema: SchemaStorage.hasStoredSchema(),
+      schemaInfo,
     });
   }, [projectId]);
 
@@ -391,7 +403,18 @@ export function DataSeedingInterface({
     setIsUploading(true);
 
     try {
-      // First, ensure the Edge Function exists in the user's project (CPU-optimized version)
+      // Enhanced schema data for the edge function
+      const enhancedSchema = {
+        ...schema,
+        projectId: projectId,
+        // Include AI analysis data if available for better column mapping
+        ...(storedSchemaData?.aiAnalysis && {
+          aiAnalysis: storedSchemaData.aiAnalysis,
+          csvResults: storedSchemaData.csvResults,
+        }),
+      };
+
+      // Create the edge function with enhanced schema mapping
       const createFunctionResponse = await fetch(
         "/api/seeding/create-function",
         {
@@ -402,7 +425,8 @@ export function DataSeedingInterface({
           },
           body: JSON.stringify({
             projectId,
-            useSimpleVersion: false, // Use advanced version with streaming by default
+            useSimpleVersion: false, // Use advanced version with dynamic schema mapping
+            enhancedMapping: true, // Enable enhanced column mapping features
           }),
         }
       );
@@ -410,7 +434,7 @@ export function DataSeedingInterface({
       if (!createFunctionResponse.ok) {
         const errorData = await createFunctionResponse.json();
         throw new Error(
-          `Failed to deploy CPU-optimized Edge Function: ${errorData.error}`
+          `Failed to deploy enhanced Edge Function: ${errorData.error}`
         );
       }
 
@@ -425,7 +449,7 @@ export function DataSeedingInterface({
 
       setIsUploading(false);
 
-      // Create seeding job
+      // Create enhanced seeding job with full schema context
       const currentUserId = userEmail?.split("@")[0] || "data-seeding";
       const seedingJob: SeedingJob = {
         id: `job_${Date.now()}`,
@@ -434,10 +458,7 @@ export function DataSeedingInterface({
         fileId: files[0].id,
         fileUpload: files[0],
         schemaId: schema.id,
-        schema: {
-          ...schema,
-          projectId: projectId, // Ensure schema has project ID
-        },
+        schema: enhancedSchema, // Use enhanced schema with AI analysis
         status: "processing",
         totalRows: files[0].metadata.totalRows || 0,
         processedRows: 0,
@@ -467,13 +488,13 @@ export function DataSeedingInterface({
 
       setSeedingJobs([seedingJob]);
 
-      // Start streaming seeding process
+      // Start streaming seeding process with enhanced schema
       await startStreamSeeding(seedingJob);
     } catch (error) {
       setIsUploading(false);
       console.error("Seeding failed:", error);
     }
-  }, [files, projectId, schema, configuration, startStreamSeeding]);
+  }, [files, projectId, schema, storedSchemaData, configuration, startStreamSeeding]);
 
   const formatBytes = (bytes: number): string => {
     if (bytes === 0) return "0 Bytes";
@@ -492,7 +513,7 @@ export function DataSeedingInterface({
 
   return (
     <div className={cn("space-y-6", className)}>
-      {/* Header */}
+      {/* Enhanced Header with Schema Info */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -500,107 +521,31 @@ export function DataSeedingInterface({
               <CardTitle className="flex items-center gap-2">
                 <Database className="h-5 w-5" />
                 Data Seeding
+                {debugInfo.storedSchema && (
+                  <Badge variant="outline" className="ml-2">
+                    Schema Restored
+                  </Badge>
+                )}
               </CardTitle>
-              <p className="text-sm text-muted-foreground mt-1">
-                Upload CSV files to populate your {schema.name} schema with data
+              <p className="text-muted-foreground">
+                Upload CSV files to populate your {schema.tables.length} database tables.
+                {storedSchemaData?.aiAnalysis && (
+                  <span className="text-sm text-green-600 block mt-1">
+                    ✅ Using AI-enhanced column mapping for better data accuracy
+                  </span>
+                )}
               </p>
             </div>
-
-            <div className="flex items-center gap-2">
-              {files.length > 0 && !isStreamingSeeding && (
-                <Button
-                  onClick={startSeeding}
-                  disabled={
-                    isUploading ||
-                    seedingJobs.some((j) => j.status === "processing")
-                  }
-                  className="gap-2"
-                >
-                  <Zap className="h-4 w-4" />
-                  Seed Data
-                </Button>
-              )}
-              {isStreamingSeeding && (
-                <Button
-                  onClick={stopStreamSeeding}
-                  variant="destructive"
-                  className="gap-2"
-                >
-                  <X className="h-4 w-4" />
-                  Stop Seeding
-                </Button>
-              )}
-              {streamError && (
-                <Button
-                  onClick={resetStream}
-                  variant="outline"
-                  className="gap-2"
-                >
-                  Reset
-                </Button>
-              )}
-            </div>
-          </div>
-
-          {/* Debug Info - Development only */}
-          {process.env.NODE_ENV === "development" && (
-            <Alert className="mt-4 hidden">
-              <Info className="h-4 w-4" />
-              <AlertDescription>
-                <strong>Debug Info:</strong>
-                Passed: &quot;{debugInfo.passedProject || "missing"}&quot; |
-                Stored: &quot;{debugInfo.storedProject?.projectId || "missing"}
-                &quot; | Schema: &quot;{schema.projectId || "missing"}&quot; |
-                Final: &quot;
-                {ProjectStorage.getProjectId(
-                  schema.projectId || debugInfo.passedProject
-                ) || "missing"}
-                &quot;
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {/* Progress Debug - Show current seeding progress */}
-          {seedingProgress && process.env.NODE_ENV === "development" && (
-            <Alert className="mt-4">
-              <TrendingUp className="h-4 w-4" />
-              <AlertDescription>
-                <strong>Live Progress:</strong>{" "}
-                {seedingProgress.overallProgress?.toFixed(1)}% | Phase:{" "}
-                {seedingProgress.currentPhase} | Status:{" "}
-                {seedingProgress.status} |
-                {seedingProgress.currentTable &&
-                  ` Table: ${seedingProgress.currentTable}`}
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {/* Quick Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-            <div className="text-center p-3 bg-muted/30 rounded-lg">
-              <p className="text-2xl font-bold text-blue-600">
-                {schema.tables.length}
-              </p>
-              <p className="text-xs text-muted-foreground">Target Tables</p>
-            </div>
-            <div className="text-center p-3 bg-muted/30 rounded-lg">
-              <p className="text-2xl font-bold text-green-600">
-                {files.length}
-              </p>
-              <p className="text-xs text-muted-foreground">Files Ready</p>
-            </div>
-            <div className="text-center p-3 bg-muted/30 rounded-lg">
-              <p className="text-2xl font-bold text-orange-600">
-                {formatBytes(files.reduce((sum, f) => sum + f.size, 0))}
-              </p>
-              <p className="text-xs text-muted-foreground">Total Size</p>
-            </div>
-            <div className="text-center p-3 bg-muted/30 rounded-lg">
-              <p className="text-2xl font-bold text-purple-600">
-                {seedingJobs.filter((j) => j.status === "completed").length}
-              </p>
-              <p className="text-xs text-muted-foreground">Completed</p>
-            </div>
+            
+            {/* Schema Storage Info */}
+            {debugInfo.storedSchema && (
+              <div className="text-right text-sm text-muted-foreground">
+                <div>Schema: {debugInfo.schemaInfo?.schemaName}</div>
+                <div>{debugInfo.schemaInfo?.tablesCount} tables, {debugInfo.schemaInfo?.csvFilesCount} CSV files</div>
+                <div>Last updated: {debugInfo.schemaInfo?.lastUpdated ? 
+                  new Date(debugInfo.schemaInfo.lastUpdated).toLocaleDateString() : 'Unknown'}</div>
+              </div>
+            )}
           </div>
         </CardHeader>
       </Card>
