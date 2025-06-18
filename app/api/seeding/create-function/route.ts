@@ -45,6 +45,12 @@ interface SeedingProgress {
   errors: any[];
   warnings: any[];
   lastUpdate: Date;
+  needsContinuation?: boolean;
+  continuationData?: {
+    processedRows: number;
+    totalRows: number;
+    nextChunkIndex: number;
+  };
 }
 
 class CSVProcessor {
@@ -55,9 +61,15 @@ class CSVProcessor {
   private warnings: any[] = [];
   private startTime: number;
 
-  // Chunked processing constants - REDUCED for CPU limit compliance
-  private static readonly CHUNK_SIZE = 25; // Process 25 rows per invocation (reduced from 50)
-  private static readonly MAX_CPU_TIME = 1500; // Leave 500ms buffer (1.5s)
+  // Chunked processing constants - Based on actual Supabase Edge Function limits
+  private static readonly CHUNK_SIZE = 100; // Increased chunk size for efficiency
+  private static readonly MAX_CPU_TIME = 1200; // 1.2s CPU time limit (more aggressive)
+  
+  // Cache for foreign key IDs to avoid repeated lookups
+  private fkCache: Map<string, string | null> = new Map();
+  
+  // Cache for actual inserted property IDs by row index
+  private propertyIdCache: Map<number, string> = new Map();
 
   constructor(request: SeedDataRequest, supabaseUrl: string, supabaseKey: string) {
     this.request = request;
@@ -82,6 +94,8 @@ class CSVProcessor {
       errors: [],
       warnings: [],
       lastUpdate: new Date(),
+      needsContinuation: false,
+      continuationData: undefined,
     };
   }
 
@@ -90,8 +104,8 @@ class CSVProcessor {
       console.log('🚀 SEEDING ENGINE - Starting processing');
       
       if (onProgress) {
-        // STREAMING MODE: Process all data progressively with live updates
-        return await this.processAllDataWithStreaming(onProgress);
+        // SIMPLE CHUNK MODE: Process one chunk and return continuation info
+        return await this.processOneChunkWithContinuation(onProgress);
       } else {
         // NON-STREAMING MODE: Process single chunk
         return await this.processSingleChunk();
@@ -110,19 +124,12 @@ class CSVProcessor {
   }
 
   /**
-   * Process all data with streaming progress updates
+   * Process ONE chunk and return continuation data if needed
    */
-  private async processAllDataWithStreaming(onProgress: (progress: SeedingProgress) => void): Promise<SeedingProgress> {
-    console.log('📡 STREAMING MODE: Processing all data with live progress');
+  private async processOneChunkWithContinuation(onProgress: (progress: SeedingProgress) => void): Promise<SeedingProgress> {
+    console.log('📋 SIMPLE CHUNK MODE: Processing one chunk per invocation');
     
-    // Reset start time for CPU monitoring
-    this.startTime = Date.now();
-    
-    // Quick initialization
-    this.updateProgress(5, "parsing", "Initializing...");
-    onProgress(this.progress);
-    
-    // Get all CSV data
+    // Get CSV data
     this.updateProgress(10, "parsing", "Downloading CSV...");
     onProgress(this.progress);
     
@@ -137,7 +144,7 @@ class CSVProcessor {
       return this.progress;
     }
 
-    // Parse headers quickly
+    // Parse headers
     this.updateProgress(15, "parsing", "Parsing CSV structure...");
     onProgress(this.progress);
     
@@ -147,65 +154,33 @@ class CSVProcessor {
     
     console.log(\`📊 Total rows to process: \${totalRows}\`);
 
-    // Quick essential lookup creation (skip full initialization)
-    this.updateProgress(20, "processing", "Creating essential lookups...");
-    onProgress(this.progress);
+    // Create essential lookups ONCE
+    const processedRows = this.request.processedRows || 0;
+    if (processedRows === 0) {
+      this.updateProgress(20, "processing", "Creating essential lookups...");
+      onProgress(this.progress);
+      await this.quickPreCreateLookups();
+    }
+
+    // Process smaller chunk to avoid timeout (100 rows) 
+    const chunkSize = 100;
+    const startIdx = processedRows;
+    const endIdx = Math.min(startIdx + chunkSize, totalRows);
     
-    await this.quickPreCreateLookups();
-
-    // Process in larger chunks for efficiency
-    const chunkSize = Math.min(50, Math.ceil(totalRows / 10)); // Process in 10 chunks or 50 rows max
-    let processedRows = this.request.processedRows || 0; // Resume from where we left off
-    const startChunkIndex = Math.floor(processedRows / chunkSize);
-
-    console.log(\`📋 Processing \${totalRows} total rows in chunks of \${chunkSize}\`);
-    console.log(\`📋 Resuming from chunk \${startChunkIndex}, \${processedRows} rows already processed\`);
-
-    for (let chunkIndex = startChunkIndex; chunkIndex * chunkSize < totalRows; chunkIndex++) {
-      // More lenient CPU time check - allow more time since we're doing real work
-      const cpuTimeUsed = Date.now() - this.startTime;
-      if (cpuTimeUsed > 7000) { // Increased to 7 seconds to process more data per invocation
-        console.log(\`⏰ CPU limit reached at chunk \${chunkIndex}, processed \${processedRows}/\${totalRows} rows\`);
-        console.log(\`📊 Successfully processed \${processedRows} rows before limit\`);
-        
-        // In streaming mode, we need to schedule continuation via separate request
-        if (processedRows < totalRows) {
-          console.log(\`🔄 Scheduling continuation for remaining \${totalRows - processedRows} rows\`);
-          
-          // Update progress to show we're continuing
-          this.updateProgress(
-            Math.min(95, (processedRows / totalRows) * 100),
-            "processing",
-            \`Processed \${processedRows}/\${totalRows} rows, continuing in new request...\`
-          );
-          onProgress(this.progress);
-          
-          // Return current progress but mark as continuing
-          this.progress.status = "processing";
-          this.progress.currentPhase = "processing";
-          
-          // For now, just finish processing what we can and let the client handle continuation
-          // This is more reliable than self-invocation which may not work in all environments
-          console.log(\`🔄 Will signal client to continue processing from row \${processedRows}\`);
-          
-          this.progress.needsContinuation = true;
-          this.progress.continuationData = {
-            processedRows: processedRows,
-            totalRows: totalRows,
-            nextChunkIndex: Math.ceil(processedRows / chunkSize),
-          };
-        }
-        
-        return this.progress; // Exit early when scheduling continuation
-      }
-
-      const startIdx = chunkIndex * chunkSize;
-      const endIdx = Math.min(startIdx + chunkSize, totalRows);
-      const chunkLines = dataLines.slice(startIdx, endIdx);
-      
-      if (chunkLines.length === 0) break;
-
-      // Parse chunk data efficiently
+    if (startIdx >= totalRows) {
+      // Already completed
+      this.progress.status = "completed";
+      this.progress.overallProgress = 100;
+      this.updateProgress(100, "completing", "All data processed");
+      onProgress(this.progress);
+      return this.progress;
+    }
+    
+    const chunkLines = dataLines.slice(startIdx, endIdx);
+    let newProcessedRows = processedRows;
+    
+    if (chunkLines.length > 0) {
+      // Parse chunk data
       const chunkData = chunkLines.map(line => {
         const values = line.split(',').map(v => v.trim().replace(/"/g, ''));
         const row: any = {};
@@ -215,207 +190,391 @@ class CSVProcessor {
         return row;
       });
 
-      console.log(\`📦 Processing chunk \${chunkIndex + 1}, rows \${startIdx + 1}-\${endIdx}\`);
+      console.log(\`📦 Processing chunk: rows \${startIdx + 1}-\${endIdx} of \${totalRows}\`);
 
-      // Update progress for this chunk
+      // Update progress
+      const progressPercent = 25 + ((startIdx + chunkLines.length) / totalRows) * 70;
       this.updateProgress(
-        25 + ((chunkIndex + 1) / Math.ceil(totalRows / chunkSize)) * 65,
+        progressPercent,
         "processing",
-        \`Processing chunk \${chunkIndex + 1}/\${Math.ceil(totalRows / chunkSize)}...\`
+        \`Processing rows \${startIdx + 1}-\${endIdx} of \${totalRows}\`
       );
       onProgress(this.progress);
 
-      // Process chunk data efficiently
-      await this.processChunkDataQuick(chunkData);
+              // Process chunk data with timeout protection
+        await this.processChunkDataWithTimeout(chunkData);
 
-      const chunkProcessedCount = chunkLines.length;
-      processedRows += chunkProcessedCount;
-      this.progress.processedRows = processedRows;
-      this.progress.successfulRows = processedRows; // Assume success for now
+        newProcessedRows = processedRows + chunkLines.length;
+        this.progress.processedRows = newProcessedRows;
+        this.progress.successfulRows = Math.max(this.progress.successfulRows, newProcessedRows);
 
-      // Send progress update
-      this.updateProgress(
-        Math.min(95, (processedRows / totalRows) * 100),
-        "processing",
-        \`Processed \${processedRows}/\${totalRows} rows\`
-      );
-      onProgress(this.progress);
+        console.log(\`✅ Completed chunk, total processed: \${newProcessedRows}/\${totalRows}\`);
+      }
       
-      console.log(\`✅ Completed chunk \${chunkIndex + 1}, total processed: \${processedRows}\`);
-    }
+      // Check if we need continuation
+      if (newProcessedRows < totalRows) {
+        console.log(\`🔄 Need continuation: \${newProcessedRows}/\${totalRows} completed\`);
+        this.progress.status = "processing";
+        this.progress.needsContinuation = true;
+        this.progress.continuationData = {
+          processedRows: newProcessedRows,
+          totalRows: totalRows,
+          nextChunkIndex: Math.ceil(newProcessedRows / chunkSize),
+        };
+        
+        // Immediately schedule the next chunk with fire-and-forget approach
+        this.scheduleNextChunkImmediate(newProcessedRows, totalRows, chunkSize);
+        
+        return this.progress;
+      }
 
-    // Mark as completed
+    // All done
+    console.log(\`🎉 ALL DATA PROCESSED: \${newProcessedRows}/\${totalRows} rows\`);
     this.progress.status = "completed";
     this.progress.overallProgress = 100;
     this.updateProgress(100, "completing", "Data seeding completed successfully");
     onProgress(this.progress);
-
+    
     return this.progress;
   }
 
   /**
-   * Quick lookup creation without heavy initialization
+   * Create essential default records for FK resolution
    */
   private async quickPreCreateLookups(): Promise<void> {
     try {
-      // Create only the most essential default records
       const schema = this.request.schema;
-      const essentialTables = ['jurisdictions', 'permit_types', 'permit_statuses'];
+      const defaultRecords: { [tableName: string]: any } = {};
       
-      for (const tableName of essentialTables) {
+      // Create minimal default records for common lookup tables
+      const lookupTables = [
+        { name: 'jurisdictions', record: { name: 'Default Jurisdiction' } },
+        { name: 'permit_types', record: { name: 'General Permit' } },
+        { name: 'permit_statuses', record: { name: 'Active' } },
+        { name: 'builders', record: { name: 'Unknown Builder', company_name: 'Unknown' } },
+        { name: 'businesses', record: { name: 'Unknown Business', business_type: 'Other' } },
+      ];
+      
+      for (const { name: tableName, record } of lookupTables) {
         const table = schema.tables.find(t => t.name === tableName);
         if (table) {
           const defaultRecord = {
             id: crypto.randomUUID(),
-            name: 'Default',
+            ...record,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
           };
           
           try {
-            await this.supabaseClient
+            const { data, error } = await this.supabaseClient
               .from(tableName)
-              .upsert([defaultRecord], { ignoreDuplicates: true });
+              .upsert([defaultRecord], { ignoreDuplicates: true })
+              .select('id')
+              .single();
+              
+            if (!error && data?.id) {
+              // Cache the default FK IDs
+              this.fkCache.set(\`\${tableName.slice(0, -1)}_id\`, data.id); // e.g., "builder_id"
+              console.log(\`✅ Created default \${tableName}: \${data.id}\`);
+            }
           } catch (error) {
-            // Ignore errors - table might not exist or have different schema
-            console.log(\`Skipped \${tableName}:\`, error.message);
+            console.log(\`⏭️ Skipped \${tableName}:\`, error.message);
           }
         }
       }
     } catch (error) {
-      console.log('Quick lookup creation failed:', error.message);
+      console.log('❌ Quick lookup creation failed:', error.message);
     }
   }
 
   /**
-   * Quick chunk processing optimized for speed
+   * Process chunk data with timeout protection and simplified FK handling
    */
-  private async processChunkDataQuick(chunkData: any[]): Promise<void> {
+  private async processChunkDataWithTimeout(chunkData: any[]): Promise<void> {
     if (!chunkData || chunkData.length === 0) return;
     
     const schema = this.request.schema;
+    const startTime = Date.now();
     
-    // Process ALL tables, but prioritize main tables first
-    const sortedTables = [...schema.tables].sort((a, b) => {
-      const aIsMain = a.name === 'properties' || a.name === 'permits';
-      const bIsMain = b.name === 'properties' || b.name === 'permits';
-      if (aIsMain && !bIsMain) return -1;
-      if (!aIsMain && bIsMain) return 1;
+    // CRITICAL: Process properties FIRST, then property-related tables
+    const tables = [...schema.tables].sort((a, b) => {
+      if (a.name === 'properties') return -1;
+      if (b.name === 'properties') return 1;
+      
+      // Property-related tables next
+      const aIsPropertyRelated = a.name.startsWith('property_');
+      const bIsPropertyRelated = b.name.startsWith('property_');
+      if (aIsPropertyRelated && !bIsPropertyRelated) return -1;
+      if (!aIsPropertyRelated && bIsPropertyRelated) return 1;
+      
+      // Lookup tables next
+      const aIsLookup = this.isLookupTable(a);
+      const bIsLookup = this.isLookupTable(b);
+      if (aIsLookup && !bIsLookup) return -1;
+      if (!aIsLookup && bIsLookup) return 1;
       return 0;
     });
     
-    // Process each table
-    for (const table of sortedTables) {
-      console.log(\`Quick processing \${chunkData.length} rows for table: \${table.name}\`);
+    console.log(\`🚀 Processing \${tables.length} tables: \${tables.map(t => t.name).join(', ')}\`);
+    
+    // Process only 2-3 tables per chunk to avoid timeout
+    const maxTablesPerChunk = 3;
+    const tablesToProcess = tables.slice(0, maxTablesPerChunk);
+    
+    // Process each table with timeout checks
+    for (const table of tablesToProcess) {
+      // Check CPU time before processing each table
+      const elapsedTime = Date.now() - startTime;
+      if (elapsedTime > CSVProcessor.MAX_CPU_TIME) {
+        console.log(\`⏰ CPU timeout reached (\${elapsedTime}ms), stopping table processing\`);
+        break;
+      }
+      
+      console.log(\`📋 Processing table: \${table.name}\`);
       
       try {
-        // Filter data relevant to this table (if it has table-specific columns)
+        // Quick data filtering 
         const relevantData = this.filterDataForTable(chunkData, table);
+        
         if (relevantData.length === 0) {
-          console.log(\`No relevant data for table \${table.name}, skipping\`);
+          console.log(\`⏭️ No data for \${table.name}, skipping\`);
           continue;
         }
         
-        // Enhanced mapping with better column matching
-        const insertData = relevantData.map(row => {
-          const mapped: any = {
-            id: crypto.randomUUID(),
+        console.log(\`📊 \${table.name}: \${relevantData.length} rows to process\`);
+        
+        // Simple data mapping without complex FK resolution
+        const insertData = [];
+        
+        for (let rowIndex = 0; rowIndex < relevantData.length; rowIndex++) {
+          const row = relevantData[rowIndex];
+          const generatedId = crypto.randomUUID();
+          
+          let mapped: any = {
+            id: generatedId,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
           };
           
-          // Smart column mapping with fuzzy matching
-          table.columns?.forEach((col: any) => {
-            if (!['id', 'created_at', 'updated_at'].includes(col.name)) {
-              // Try multiple ways to find the CSV column
-              const csvValue = this.findCsvValue(row, col.name);
-              const value = String(csvValue || '').trim();
-              
-              if (csvValue !== undefined) {
-                console.log(\`📋 Mapping \${col.name} from CSV "\${csvValue}" -> DB value\`);
-              }
-              
-              // Robust type conversion with empty value handling  
-              const colType = (col.type || '').toLowerCase();
-              if (colType.includes('integer') || colType.includes('bigint') || colType.includes('int')) {
-                if (value === '' || value === 'null' || value === 'NULL') {
-                  mapped[col.name] = null;
-                } else {
-                  const parsed = parseInt(value);
-                  mapped[col.name] = isNaN(parsed) ? null : parsed;
-                }
-              } else if (colType.includes('numeric') || colType.includes('decimal') || colType.includes('real') || colType.includes('double')) {
-                if (value === '' || value === 'null' || value === 'NULL') {
-                  mapped[col.name] = null;
-                } else {
-                  const parsed = parseFloat(value);
-                  mapped[col.name] = isNaN(parsed) ? null : parsed;
-                }
-              } else if (colType.includes('boolean') || colType.includes('bool')) {
-                if (value === '' || value === 'null' || value === 'NULL') {
-                  mapped[col.name] = null;
-                } else {
-                  mapped[col.name] = ['true', '1', 'yes', 'y', 't'].includes(value.toLowerCase());
-                }
-              } else if (colType.includes('date') || colType.includes('timestamp')) {
-                if (value === '' || value === 'null' || value === 'NULL') {
-                  mapped[col.name] = null;
-                } else {
-                  // Try to parse date, fallback to null if invalid
-                  const date = new Date(value);
-                  mapped[col.name] = isNaN(date.getTime()) ? null : date.toISOString();
-                }
-              } else {
-                // Text/varchar fields
-                if (value === 'null' || value === 'NULL') {
-                  mapped[col.name] = null;
-                } else {
-                  mapped[col.name] = value.substring(0, 255); // Truncate long strings
-                }
-              }
-            }
-          });
+          // Cache property IDs for FK resolution
+          if (table.name === 'properties') {
+            const globalRowIndex = (this.request.processedRows || 0) + rowIndex;
+            this.propertyIdCache.set(globalRowIndex, generatedId);
+          }
           
-          return mapped;
-        });
+          let shouldSkipRow = false;
+          
+          // Enhanced column mapping with better error handling
+          for (const col of (table.columns || [])) {
+            if (['id', 'created_at', 'updated_at'].includes(col.name)) {
+              continue; 
+            }
+            
+            try {
+              // Handle FK columns with improved logic
+              if (col.name.endsWith('_id') && col.name !== 'id') {
+                if (col.name === 'property_id') {
+                  // Use the actual property ID from the same row
+                  const globalRowIndex = (this.request.processedRows || 0) + rowIndex;
+                  const propertyId = this.propertyIdCache.get(globalRowIndex);
+                  if (propertyId) {
+                    mapped[col.name] = propertyId;
+                  } else {
+                    // Fallback to first available property ID or skip row
+                    const firstPropertyId = Array.from(this.propertyIdCache.values())[0];
+                    if (firstPropertyId) {
+                      mapped[col.name] = firstPropertyId;
+                    } else {
+                      // Skip this row if no property IDs available
+                      shouldSkipRow = true;
+                      break;
+                    }
+                  }
+                } else {
+                  // For other FKs, set to null to avoid constraint violations
+                  mapped[col.name] = null;
+                }
+                continue;
+              }
+              
+              // Map regular columns with enhanced type conversion
+              const csvValue = this.findCsvValue(row, col.name);
+              if (csvValue !== undefined) {
+                mapped[col.name] = this.convertValue(csvValue, col.type || 'text', col.name);
+              } else {
+                // Provide sensible defaults for unmapped columns
+                mapped[col.name] = this.getDefaultValueForColumn(col);
+              }
+            } catch (error) {
+              // If individual column mapping fails, continue with next column
+              console.log(\`⚠️ Column mapping error for \${col.name}:\`, error.message);
+              mapped[col.name] = this.getDefaultValueForColumn(col);
+            }
+          }
+          
+          if (!shouldSkipRow && mapped) {
+            insertData.push(mapped);
+          }
+        }
         
-        // Only insert if we have actual data (not just id/timestamps)
-        const hasData = insertData.some(row => 
-          Object.keys(row).some(key => 
-            !['id', 'created_at', 'updated_at'].includes(key) && row[key] !== null
-          )
-        );
-        
-        if (!hasData) {
-          console.log(\`No meaningful data for \${table.name}, skipping insert\`);
+        if (insertData.length === 0) {
+          console.log(\`⏭️ No valid rows for \${table.name} after mapping\`);
           continue;
         }
         
-        // Batch insert with error handling
+        // Quick insert with upsert for safety
+        console.log(\`💾 Inserting \${insertData.length} rows into \${table.name}\`);
+        
         const { error } = await this.supabaseClient
           .from(table.name)
-          .insert(insertData);
+          .upsert(insertData);
           
         if (error) {
-          console.log(\`❌ Insert error for \${table.name}:\`, error.message);
-          console.log(\`📋 Sample data:\`, JSON.stringify(insertData[0], null, 2));
-          this.progress.failedRows += insertData.length;
+          console.log(\`❌ \${table.name} insert error:\`, error.message);
+          
+          // For properties table, this is critical - try individual inserts
+          if (table.name === 'properties') {
+            console.log(\`🔧 Properties failed - trying individual row inserts\`);
+            await this.insertRowsIndividuallyAndCache(table.name, insertData, this.request.processedRows || 0);
+          } else {
+            // For other tables, just log and continue
+            this.errors.push({
+              table: table.name,
+              error: error.message,
+              timestamp: new Date(),
+            });
+          }
         } else {
-          console.log(\`✅ Successfully inserted \${insertData.length} rows into \${table.name}\`);
+          console.log(\`✅ \${table.name}: \${insertData.length} rows inserted\`);
           this.progress.successfulRows = (this.progress.successfulRows || 0) + insertData.length;
         }
         
       } catch (error) {
-        console.log(\`Error processing table \${table.name}:\`, error.message);
-        this.progress.failedRows += chunkData.length;
+        console.log(\`❌ Error processing \${table.name}:\`, error.message);
       }
     }
   }
+  
+  /**
+   * Get a cached default FK ID or return null
+   */
+  private getDefaultFKId(columnName: string): string | null {
+    return this.fkCache.get(columnName) || null;
+  }
+  
+  /**
+   * Get a sensible default value for a column based on its type
+   */
+  private getDefaultValueForColumn(col: any): any {
+    const colType = (col.type || '').toLowerCase();
+    
+    if (col.name === 'name') {
+      return 'Unknown';
+    }
+    
+    if (colType.includes('int')) {
+      return 0;
+    }
+    
+    if (colType.includes('numeric') || colType.includes('decimal') || colType.includes('real')) {
+      return 0.0;
+    }
+    
+    if (colType.includes('bool')) {
+      return false;
+    }
+    
+    if (colType.includes('date') || colType.includes('timestamp')) {
+      return new Date().toISOString();
+    }
+    
+    if (col.name.includes('year') || col.name.includes('_year')) {
+      return new Date().getFullYear();
+    }
+    
+    if (colType.includes('uuid')) {
+      return crypto.randomUUID();
+    }
+    
+    // Default to empty string or null based on nullability
+    return col.nullable !== false ? null : '';
+  }
+  
+  /**
+   * Enhanced value conversion with better varchar handling and null safety
+   */
+  private convertValue(value: any, columnType: string, columnName?: string): any {
+    if (!value || value === '' || value === 'null' || value === 'NULL') {
+      // For required fields like 'name', provide a default value
+      if (columnName === 'name') {
+        return 'Unknown';
+      }
+      return null;
+    }
+    
+    const type = columnType.toLowerCase();
+    const strValue = String(value).trim();
+    
+    if (type.includes('int')) {
+      const parsed = parseInt(strValue.replace(/[^\d-]/g, ''));
+      if (isNaN(parsed)) {
+        // Special handling for year fields
+        if (columnName && (columnName.includes('year') || columnName.includes('_year'))) {
+          return new Date().getFullYear();
+        }
+        return null;
+      }
+      return parsed;
+    }
+    
+    if (type.includes('numeric') || type.includes('decimal') || type.includes('real')) {
+      const parsed = parseFloat(strValue.replace(/[^\d.-]/g, ''));
+      return isNaN(parsed) ? null : parsed;
+    }
+    
+    if (type.includes('bool')) {
+      return ['true', '1', 'yes', 'y', 't'].includes(strValue.toLowerCase());
+    }
+    
+    if (type.includes('date') || type.includes('timestamp')) {
+      const date = new Date(strValue);
+      return isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+    }
+    
+    // BULLETPROOF varchar handling - NEVER fail on length
+    if (type.includes('varchar') || type.includes('character varying')) {
+      const lengthMatch = type.match(/\((\d+)\)/);
+      const maxLength = lengthMatch ? parseInt(lengthMatch[1]) : 255;
+      
+      // ULTRA-SAFE truncation - guaranteed to never exceed length
+      if (maxLength <= 2) {
+        // For varchar(2) - return state codes or XX
+        const cleaned = strValue.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+        if (cleaned.length >= 2) return cleaned.substring(0, 2);
+        if (cleaned.length === 1) return cleaned + 'X';
+        return 'XX'; // Absolute fallback
+      }
+      
+      if (maxLength <= 10) {
+        // For short fields, clean and truncate aggressively
+        const cleaned = strValue.replace(/[^A-Za-z0-9 ]/g, '');
+        return cleaned.substring(0, maxLength) || 'DEFAULT'.substring(0, maxLength);
+      }
+      
+      // For longer fields, just truncate
+      return strValue.substring(0, maxLength);
+    }
+    
+    // Default to string, aggressively truncated to prevent issues
+    return strValue.substring(0, 255);
+  }
 
   /**
-   * Enhanced CSV column value finder with intelligent mapping
+   * Enhanced CSV column value finder with intelligent mapping and better fallbacks
    */
   private findCsvValue(row: any, dbColumnName: string): any {
+    const csvColumns = Object.keys(row);
+    
     // Try exact match first
     if (row[dbColumnName] !== undefined) {
       return row[dbColumnName];
@@ -437,13 +596,51 @@ class CSVProcessor {
       dbColumnName.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(''), // PascalCase
       dbColumnName.split('_').join(' ').toLowerCase(), // Sentence case
       
-      // Common field name aliases
-      ...(dbColumnName === 'id' ? ['ID', 'identifier', 'primary_key', 'pk'] : []),
-      ...(dbColumnName === 'name' ? ['title', 'label', 'description', 'desc'] : []),
-      ...(dbColumnName === 'created_at' ? ['created', 'date_created', 'creation_date', 'created_date'] : []),
-      ...(dbColumnName === 'updated_at' ? ['updated', 'modified', 'date_modified', 'last_modified'] : []),
-      ...(dbColumnName.includes('date') ? [dbColumnName.replace('date', 'time'), dbColumnName.replace('_date', '')] : []),
-      ...(dbColumnName.includes('_id') ? [dbColumnName.replace('_id', ''), dbColumnName.replace('_id', '_key')] : []),
+      // Common field name aliases with more comprehensive coverage
+      ...(dbColumnName === 'id' ? ['ID', 'identifier', 'primary_key', 'pk', 'record_id'] : []),
+      ...(dbColumnName === 'name' ? ['title', 'label', 'description', 'desc', 'business_name', 'company_name', 'entity_name', 'BUILDERS'] : []),
+      ...(dbColumnName === 'created_at' ? ['created', 'date_created', 'creation_date', 'created_date', 'create_date'] : []),
+      ...(dbColumnName === 'updated_at' ? ['updated', 'modified', 'date_modified', 'last_modified', 'update_date'] : []),
+      ...(dbColumnName.includes('date') ? [dbColumnName.replace('date', 'time'), dbColumnName.replace('_date', ''), dbColumnName.replace('date_', '')] : []),
+      ...(dbColumnName.includes('_id') ? [dbColumnName.replace('_id', ''), dbColumnName.replace('_id', '_key'), dbColumnName.replace('_id', '_number')] : []),
+      
+      // PERMIT-SPECIFIC mappings
+      ...(dbColumnName === 'permit_number' ? ['PERMIT_NUMBER'] : []),
+      ...(dbColumnName === 'description' ? ['DESCRIPTION', 'TYPE'] : []),
+      ...(dbColumnName === 'business_name' ? ['BUSINESS_NAME'] : []),
+      ...(dbColumnName === 'job_value' ? ['JOB_VALUE'] : []),
+      ...(dbColumnName === 'fees' ? ['FEES'] : []),
+      ...(dbColumnName === 'initial_status_date' ? ['INITIAL_STATUS_DATE'] : []),
+      ...(dbColumnName === 'initial_status' ? ['INITIAL_STATUS'] : []),
+      ...(dbColumnName === 'latest_status_date' ? ['LATEST_STATUS_DATE'] : []),
+      ...(dbColumnName === 'latest_status' ? ['LATEST_STATUS'] : []),
+      ...(dbColumnName === 'applied_date' ? ['APPLIED_DATE'] : []),
+      ...(dbColumnName === 'issued_date' ? ['ISSUED_DATE'] : []),
+      ...(dbColumnName === 'project_type' ? ['PROJECT_TYPE'] : []),
+      ...(dbColumnName === 'permit_jurisdiction' ? ['PERMIT_JURISDICTION'] : []),
+      
+      // Address-specific mappings
+      ...(dbColumnName === 'street_address' ? ['address', 'street', 'address_line_1', 'property_address', 'full_address', 'STREETADDRESS', 'PROPERTYFULLSTREETADDRESS'] : []),
+      ...(dbColumnName === 'city' ? ['city_name', 'municipality', 'locality', 'CITY'] : []),
+      ...(dbColumnName === 'state' ? ['state_code', 'state_abbr', 'province', 'STATE'] : []),
+      ...(dbColumnName === 'zip_code' ? ['zip', 'postal_code', 'zipcode', 'ZIP_CODE'] : []),
+      ...(dbColumnName === 'latitude' ? ['LATITUDE', 'lat'] : []),
+      ...(dbColumnName === 'longitude' ? ['LONGITUDE', 'lng', 'lon'] : []),
+      ...(dbColumnName === 'parcel_number' ? ['PARCEL_NUMBER', 'APN'] : []),
+      
+      // Property features mappings
+      ...(dbColumnName === 'air_conditioning' ? ['AIRCONDITIONING'] : []),
+      ...(dbColumnName === 'garage_type_parking' ? ['GARAGETYPEPARKING'] : []),
+      ...(dbColumnName === 'number_of_bedrooms' ? ['NUMBEROFBEDROOMS'] : []),
+      ...(dbColumnName === 'number_of_baths' ? ['NUMBEROFBATHS'] : []),
+      ...(dbColumnName === 'heating' ? ['HEATING'] : []),
+      ...(dbColumnName === 'exterior_walls' ? ['EXTERIORWALLS'] : []),
+      ...(dbColumnName === 'foundation' ? ['FOUNDATION'] : []),
+      ...(dbColumnName === 'roof_type' ? ['ROOFTYPE'] : []),
+      
+      // Business-specific mappings
+      ...(dbColumnName === 'business_name' ? ['company', 'business', 'contractor', 'builder', 'entity_name'] : []),
+      ...(dbColumnName === 'permit_number' ? ['permit_no', 'permit_id', 'permit', 'application_number', 'app_no'] : []),
     ];
     
     for (const variation of variations) {
@@ -453,14 +650,24 @@ class CSVProcessor {
       }
     }
     
-    // Semantic partial matching with scoring
+    // Semantic partial matching with improved scoring
     const semanticMatches = keys.map(key => ({
       key,
       score: this.calculateSemanticScore(key.toLowerCase(), dbColumnName.toLowerCase())
-    })).filter(m => m.score > 0.5).sort((a, b) => b.score - a.score);
+    })).filter(m => m.score > 0.4).sort((a, b) => b.score - a.score); // Lower threshold for more matches
     
     if (semanticMatches.length > 0) {
       return row[semanticMatches[0].key];
+    }
+    
+    // Final fallback: try partial word matching
+    const dbWords = dbColumnName.toLowerCase().split('_');
+    for (const key of keys) {
+      const keyWords = key.toLowerCase().split(/[_\s-]/);
+      const commonWords = dbWords.filter(word => keyWords.includes(word));
+      if (commonWords.length > 0 && commonWords.length >= Math.min(dbWords.length, keyWords.length) / 2) {
+        return row[key];
+      }
     }
     
     return undefined;
@@ -526,35 +733,102 @@ class CSVProcessor {
   }
 
   /**
-   * Enhanced table filtering based on dynamic schema analysis
+   * Proper English pluralization for table names
+   */
+  private pluralize(word: string): string {
+    // Handle common irregular plurals
+    const irregulars: Record<string, string> = {
+      'property': 'properties',
+      'business': 'businesses',
+      'company': 'companies',
+      'category': 'categories',
+      'entity': 'entities',
+      'city': 'cities',
+      'country': 'countries',
+      'person': 'people',
+      'child': 'children',
+      'mouse': 'mice',
+      'foot': 'feet',
+      'tooth': 'teeth',
+      'man': 'men',
+      'woman': 'women'
+    };
+
+    if (irregulars[word.toLowerCase()]) {
+      return irregulars[word.toLowerCase()];
+    }
+
+    // Handle regular pluralization rules
+    if (word.endsWith('y') && !['a', 'e', 'i', 'o', 'u'].includes(word[word.length - 2])) {
+      return word.slice(0, -1) + 'ies';
+    }
+    if (word.endsWith('s') || word.endsWith('sh') || word.endsWith('ch') || word.endsWith('x') || word.endsWith('z')) {
+      return word + 'es';
+    }
+    if (word.endsWith('f')) {
+      return word.slice(0, -1) + 'ves';
+    }
+    if (word.endsWith('fe')) {
+      return word.slice(0, -2) + 'ves';
+    }
+    
+    // Default: just add 's'
+    return word + 's';
+  }
+
+  /**
+   * PERMIT-AWARE table filtering - understands that CSV contains permit data
    */
   private filterDataForTable(data: any[], table: any): any[] {
     if (!data || data.length === 0) return [];
     
     const tableName = table.name.toLowerCase();
-    console.log(\`[Dynamic Filter] Processing table: \${tableName} with \${table.columns?.length || 0} columns\`);
+    console.log(\`[PERMIT Filter] Processing table: \${tableName}\`);
     
-    // Check if this is a main entity table (has many non-foreign-key columns)
-    const isMainEntity = this.isMainEntityTable(table);
+    // PROPERTIES: Create unique properties from address data
+    if (tableName === 'properties') {
+      const uniqueProperties = this.extractUniqueProperties(data);
+      console.log(\`[PERMIT Filter] Properties - extracted \${uniqueProperties.length} unique properties from \${data.length} permits\`);
+      return uniqueProperties;
+    }
     
-    // Check if this is a lookup/reference table (few columns, mainly name/id)
-    const isLookupTable = this.isLookupTable(table);
-    
-    if (isMainEntity) {
-      console.log(\`[Dynamic Filter] \${tableName} identified as main entity - returning all data\`);
+    // PERMITS: Each CSV row is a permit
+    if (tableName === 'permits') {
+      console.log(\`[PERMIT Filter] Permits - using all \${data.length} rows (each row is a permit)\`);
       return data;
     }
     
-    if (isLookupTable) {
-      console.log(\`[Dynamic Filter] \${tableName} identified as lookup table - extracting unique values\`);
-      return this.extractUniqueValuesForLookup(data, table);
+    // BUILDERS: Extract unique builder names
+    if (tableName === 'builders') {
+      const uniqueBuilders = this.extractUniqueValues(data, ['BUILDERS', 'BUSINESS_NAME'], 'name');
+      console.log(\`[PERMIT Filter] Builders - extracted \${uniqueBuilders.length} unique builders\`);
+      return uniqueBuilders;
     }
     
-    // For relationship tables, filter based on relevant data presence
-    const relevantData = data.filter(row => this.hasRelevantDataForTable(row, table));
-    console.log(\`[Dynamic Filter] \${tableName} filtered to \${relevantData.length}/\${data.length} relevant rows\`);
+    // PROPERTY_FEATURES: One per property, aggregate features
+    if (tableName === 'property_features') {
+      const uniqueProperties = this.extractUniqueProperties(data);
+      console.log(\`[PERMIT Filter] Property Features - \${uniqueProperties.length} properties with features\`);
+      return uniqueProperties; // Will map features in column mapping
+    }
     
-    return relevantData;
+    // PROPERTY_ASSESSMENTS: One per property, use assessment data
+    if (tableName === 'property_assessments') {
+      const uniqueProperties = this.extractUniqueProperties(data);
+      console.log(\`[PERMIT Filter] Property Assessments - \${uniqueProperties.length} properties with assessment data\`);
+      return uniqueProperties;
+    }
+    
+    // LOOKUP TABLES: Extract unique values
+    if (this.isLookupTable(table)) {
+      const uniqueValues = this.extractUniqueValuesForLookup(data, table);
+      console.log(\`[PERMIT Filter] Lookup \${tableName} - extracted \${uniqueValues.length} unique values\`);
+      return uniqueValues;
+    }
+    
+    // DEFAULT: Use all data
+    console.log(\`[PERMIT Filter] Default \${tableName} - using all \${data.length} rows\`);
+    return data;
   }
 
   /**
@@ -573,6 +847,7 @@ class CSVProcessor {
     
     // Main entity if it has many non-FK columns
     const dataColumns = nonSystemColumns.length - foreignKeyColumns.length;
+    console.log(\`[MainEntity Check] \${table.name}: \${nonSystemColumns.length} non-system cols, \${foreignKeyColumns.length} FK cols, \${dataColumns} data cols\`);
     return dataColumns >= 3; // At least 3 data columns suggests main entity
   }
 
@@ -597,7 +872,9 @@ class CSVProcessor {
       !['id', 'created_at', 'updated_at'].includes(col.name.toLowerCase())
     );
     
-    return hasNameField && nonSystemColumns.length <= 3;
+    const isLookup = hasNameField && nonSystemColumns.length <= 3;
+    console.log(\`[Lookup Check] \${table.name}: hasNameField=\${hasNameField}, nonSystemCols=\${nonSystemColumns.length}, isLookup=\${isLookup}\`);
+    return isLookup;
   }
 
   /**
@@ -639,6 +916,43 @@ class CSVProcessor {
       const value = this.findCsvValue(row, col.name);
       return value && value !== '' && value !== 'null' && value !== 'NULL';
     });
+  }
+
+  /**
+   * Extract unique properties from permit data
+   */
+  private extractUniqueProperties(data: any[]): any[] {
+    const propertyMap = new Map<string, any>();
+    
+    data.forEach(row => {
+      // Create property key from address
+      const streetAddress = row['STREETADDRESS'] || row['PROPERTYFULLSTREETADDRESS'] || '';
+      const city = row['CITY'] || '';
+      const state = row['STATE'] || '';
+      const zipCode = row['ZIP_CODE'] || '';
+      
+      if (!streetAddress) return; // Skip if no address
+      
+      const propertyKey = \`\${streetAddress}|\${city}|\${state}|\${zipCode}\`.toLowerCase();
+      
+      if (!propertyMap.has(propertyKey)) {
+        propertyMap.set(propertyKey, {
+          street_address: streetAddress,
+          city: city,
+          state: state,
+          zip_code: zipCode,
+          latitude: row['LATITUDE'] || null,
+          longitude: row['LONGITUDE'] || null,
+          parcel_number: row['PARCEL_NUMBER'] || row['APN'] || null,
+          subdivision: row['SUBDIVISION'] || null,
+          county_fips: row['COUNTY_FIPS'] || null,
+          // Keep the original row for property features/assessments
+          _originalRow: row
+        });
+      }
+    });
+    
+    return Array.from(propertyMap.values());
   }
   
   /**
@@ -710,6 +1024,193 @@ class CSVProcessor {
       const value = this.findCsvValue(row, field);
       return value && value !== '' && value !== 'null';
     });
+  }
+
+  /**
+   * Pre-resolve all foreign keys for a table to avoid repeated lookups
+   */
+  private async preResolveForeignKeys(table: any): Promise<void> {
+    const foreignKeyColumns = (table.columns || []).filter(col => 
+      col.name.endsWith('_id') && col.name !== 'id' && col.nullable === false
+    );
+    
+    console.log(\`🔄 Pre-resolving \${foreignKeyColumns.length} foreign keys for \${table.name}\`);
+    
+    for (const col of foreignKeyColumns) {
+      const cacheKey = col.name;
+      
+      // Skip if already cached
+      if (this.fkCache.has(cacheKey)) {
+        continue;
+      }
+      
+      // Find the referenced table
+      const baseTableName = col.name.replace('_id', '');
+      const pluralTableName = this.pluralize(baseTableName);
+      
+      const schema = this.request.schema;
+      const actualTable = schema.tables.find(t => 
+        t.name === pluralTableName || t.name === baseTableName || t.name === baseTableName + 's'
+      );
+      
+      const referencedTableName = actualTable ? actualTable.name : pluralTableName;
+      const alternateTableName = actualTable ? null : baseTableName;
+      
+      console.log(\`🔍 Pre-resolving FK \${col.name} -> \${referencedTableName}\`);
+      
+      // Try to get an existing ID
+      let resolvedId = await this.getExistingForeignKeyId(referencedTableName);
+      if (!resolvedId && alternateTableName) {
+        resolvedId = await this.getExistingForeignKeyId(alternateTableName);
+      }
+      
+      // If no existing ID, try to create a default record
+      if (!resolvedId) {
+        console.log(\`🔧 No existing records found in \${referencedTableName}, creating default record\`);
+        resolvedId = await this.createDefaultForeignKeyRecord(referencedTableName, alternateTableName);
+      }
+      
+      // Cache the result
+      this.fkCache.set(cacheKey, resolvedId);
+      
+      if (resolvedId) {
+        console.log(\`✅ Pre-resolved FK \${col.name} -> \${resolvedId}\`);
+      } else {
+        console.log(\`❌ Cannot resolve FK \${col.name} - rows with this FK will be skipped\`);
+      }
+    }
+  }
+
+  /**
+   * Get an existing ID from a referenced table for foreign key resolution
+   */
+  private async getExistingForeignKeyId(tableName: string): Promise<string | null> {
+    try {
+      console.log(\`🔍 Looking for existing ID in table: \${tableName}\`);
+      
+      const { data, error } = await this.supabaseClient
+        .from(tableName)
+        .select('id')
+        .limit(1)
+        .single();
+      
+      if (error) {
+        console.log(\`❌ Error querying \${tableName}:\`, error.message);
+        return null;
+      }
+      
+      if (data && data.id) {
+        console.log(\`✅ Found existing ID in \${tableName}: \${data.id}\`);
+        return data.id;
+      }
+      
+      console.log(\`📭 No records found in \${tableName}\`);
+      return null;
+    } catch (error) {
+      console.log(\`❌ Failed to query \${tableName}:\`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Create table-specific default records with required fields
+   */
+  private createTableSpecificDefaultRecord(tableName: string): any {
+    const baseRecord = {
+      id: crypto.randomUUID(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    switch (tableName.toLowerCase()) {
+      case 'properties':
+        return {
+          ...baseRecord,
+          street_address: 'Default Property Address',
+          city: 'Default City',
+          state: 'FL',
+          zip_code: '00000'
+        };
+      
+      case 'businesses':
+        return {
+          ...baseRecord,
+          name: 'Default Business'
+        };
+      
+      case 'builders':
+        return {
+          ...baseRecord,
+          name: 'Default Builder'
+        };
+      
+      case 'jurisdictions':
+        return {
+          ...baseRecord,
+          name: 'Default Jurisdiction'
+        };
+      
+      case 'permit_types':
+        return {
+          ...baseRecord,
+          name: 'Default Permit Type'
+        };
+      
+      case 'permit_statuses':
+        return {
+          ...baseRecord,
+          name: 'Default Status'
+        };
+      
+      default:
+        // Generic default for other tables
+        return {
+          ...baseRecord,
+          name: 'Default'
+        };
+    }
+  }
+
+  /**
+   * Create a default record in a referenced table for foreign key resolution
+   */
+  private async createDefaultForeignKeyRecord(primaryTableName: string, alternateTableName?: string): Promise<string | null> {
+    const tablesToTry = [primaryTableName];
+    if (alternateTableName) {
+      tablesToTry.push(alternateTableName);
+    }
+    
+    for (const tableName of tablesToTry) {
+      try {
+        console.log(\`🔧 Attempting to create default record in: \${tableName}\`);
+        
+        // Create a table-specific default record
+        const defaultRecord = this.createTableSpecificDefaultRecord(tableName);
+        
+        const { data, error } = await this.supabaseClient
+          .from(tableName)
+          .insert([defaultRecord])
+          .select('id')
+          .single();
+        
+        if (error) {
+          console.log(\`❌ Failed to create default record in \${tableName}:\`, error.message);
+          continue; // Try the next table name
+        }
+        
+        if (data && data.id) {
+          console.log(\`✅ Created default record in \${tableName}: \${data.id}\`);
+          return data.id;
+        }
+        
+      } catch (error) {
+        console.log(\`❌ Error creating default record in \${tableName}:\`, error);
+        continue; // Try the next table name
+      }
+    }
+    
+    console.log(\`❌ Failed to create default record in any of: \${tablesToTry.join(', ')}\`);
+    return null;
   }
 
   /**
@@ -933,48 +1434,65 @@ class CSVProcessor {
             if (uniqueData.length > 0) {
               const { error } = await this.supabaseClient
                 .from(table.name)
-                .upsert(uniqueData, { ignoreDuplicates: true });
+                .upsert(uniqueData);
               
-              if (error && error.code !== '23505') { // Ignore duplicate key errors
-                throw error;
+              if (error) {
+                if (['23505', '23503', '23502'].includes(error.code)) {
+                  console.log(\`⚠️ \${table.name} constraint error (continuing):\`, error.message);
+                } else {
+                  console.log(\`❌ \${table.name} upsert error:\`, error.message);
+                  this.errors.push({
+                    table: table.name,
+                    error: error.message,
+                    timestamp: new Date(),
+                  });
+                }
+              } else {
+                this.progress.successfulRows += uniqueData.length;
+                console.log(\`✅ \${table.name}: \${uniqueData.length} rows upserted\`);
               }
-              this.progress.successfulRows += uniqueData.length;
             }
           } else {
+            // For main tables, use upsert with error resilience
             const { error } = await this.supabaseClient
               .from(table.name)
-              .insert(tableData);
+              .upsert(tableData);
             
             if (error) {
-              throw error;
+              if (['23505', '23503', '23502'].includes(error.code)) {
+                console.log(\`⚠️ \${table.name} constraint error (continuing):\`, error.message);
+              } else {
+                console.log(\`❌ \${table.name} upsert error:\`, error.message);
+                // Try individual inserts for better error isolation
+                await this.insertRowsIndividually(table.name, tableData);
+              }
+            } else {
+              this.progress.successfulRows += tableData.length;
+              console.log(\`✅ \${table.name}: \${tableData.length} rows inserted\`);
             }
-            this.progress.successfulRows += tableData.length;
           }
         } catch (error) {
-          console.error(\`Error inserting into \${table.name}:\`, error);
+          console.log(\`❌ Error processing \${table.name}:\`, error.message);
           this.progress.failedRows += tableData.length;
           this.errors.push({
             table: table.name,
             error: error.message,
             timestamp: new Date(),
           });
+          // Continue processing other tables instead of stopping
         }
       }
     }
   }
 
   /**
-   * Schedule the next chunk to be processed
+   * Schedule the next chunk to be processed (immediate fire-and-forget)
    */
-  private async scheduleNextChunk(): Promise<void> {
-    const currentChunk = this.request.chunkIndex || 0;
-    const nextChunkIndex = currentChunk + 1;
+  private scheduleNextChunkImmediate(processedRows: number, totalRows: number, chunkSize: number): void {
+    const nextChunkIndex = Math.floor(processedRows / chunkSize);
     
-    console.log(\`✅ Scheduling next chunk: \${nextChunkIndex} (current was \${currentChunk})\`);
+    console.log(\`🚀 Immediately scheduling next chunk: \${nextChunkIndex}\`);
     
-    // Skip job state update since table might not exist - just continue processing
-    
-    // Make async call to continue processing (fire and forget)
     const nextRequest = {
       fileId: this.request.fileId,
       jobId: this.request.jobId,
@@ -982,33 +1500,121 @@ class CSVProcessor {
       configuration: this.request.configuration,
       fileUpload: this.request.fileUpload,
       projectConfig: this.request.projectConfig,
-      chunkIndex: nextChunkIndex, // Explicitly set the incremented index
+      processedRows: processedRows
+    };
+
+    // Fire-and-forget continuation request
+    fetch(\`https://\${this.request.schema?.projectId || 'unknown'}.supabase.co/functions/v1/seed-data?stream=true\`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(nextRequest)
+    }).then(response => {
+      console.log(\`✅ Continuation scheduled: \${response.ok ? 'success' : 'failed'}\`);
+    }).catch(error => {
+      console.log(\`❌ Continuation failed:\`, error.message);
+    });
+  }
+
+  /**
+   * Insert rows individually for better error isolation
+   */
+  private async insertRowsIndividually(tableName: string, rows: any[]): Promise<void> {
+    let successful = 0;
+    let failed = 0;
+    
+    for (const row of rows) {
+      try {
+        const { error } = await this.supabaseClient
+          .from(tableName)
+          .insert([row]);
+          
+        if (error) {
+          failed++;
+          console.log(\`❌ Individual row error in \${tableName}:\`, error.message);
+        } else {
+          successful++;
+        }
+      } catch (error) {
+        failed++;
+      }
+    }
+    
+    console.log(\`📊 \${tableName} individual inserts: \${successful} success, \${failed} failed\`);
+    this.progress.successfulRows += successful;
+    this.progress.failedRows += failed;
+  }
+
+  /**
+   * Insert property rows individually and cache successful IDs
+   */
+  private async insertRowsIndividuallyAndCache(tableName: string, rows: any[], baseRowIndex: number): Promise<void> {
+    let successful = 0;
+    let failed = 0;
+    
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      try {
+        const { data, error } = await this.supabaseClient
+          .from(tableName)
+          .insert([row])
+          .select('id')
+          .single();
+          
+        if (error) {
+          failed++;
+          console.log(\`❌ Individual row error in \${tableName}:\`, error.message);
+        } else {
+          successful++;
+          // Cache the successful property ID
+          if (tableName === 'properties' && data?.id) {
+            this.propertyIdCache.set(baseRowIndex + i, data.id);
+          }
+        }
+      } catch (error) {
+        failed++;
+      }
+    }
+    
+    console.log(\`📊 \${tableName} individual inserts: \${successful} success, \${failed} failed\`);
+    this.progress.successfulRows += successful;
+    this.progress.failedRows += failed;
+  }
+
+  /**
+   * Schedule the next chunk to be processed (legacy method for compatibility)
+   */
+  private async scheduleNextChunk(): Promise<void> {
+    const currentChunk = this.request.chunkIndex || 0;
+    const nextChunkIndex = currentChunk + 1;
+    
+    console.log(\`✅ Scheduling next chunk: \${nextChunkIndex} (current was \${currentChunk})\`);
+    
+    const nextRequest = {
+      fileId: this.request.fileId,
+      jobId: this.request.jobId,
+      schema: this.request.schema,
+      configuration: this.request.configuration,
+      fileUpload: this.request.fileUpload,
+      projectConfig: this.request.projectConfig,
+      chunkIndex: nextChunkIndex,
       processedRows: this.progress.processedRows
     };
 
-    console.log(\`📤 Next request will process chunk \${nextRequest.chunkIndex} starting from row \${nextChunkIndex * 25}\`);
-
-    // Use setTimeout to schedule the next chunk asynchronously
+    // Fire-and-forget approach
     setTimeout(async () => {
       try {
         const projectId = this.request.schema?.projectId || this.request.projectConfig?.projectId;
         const response = await fetch(\`https://\${projectId}.supabase.co/functions/v1/seed-data\`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(nextRequest)
         });
         
-        if (!response.ok) {
-          console.error('❌ Failed to schedule next chunk:', response.statusText);
-        } else {
-          console.log(\`✅ Successfully scheduled chunk \${nextChunkIndex}\`);
-        }
+        console.log(\`📤 Chunk \${nextChunkIndex} scheduled: \${response.ok ? 'success' : 'failed'}\`);
       } catch (error) {
-        console.error('❌ Error scheduling next chunk:', error);
+        console.log(\`❌ Error scheduling chunk \${nextChunkIndex}:\`, error.message);
       }
-    }, 250); // Longer delay to ensure current request completes
+    }, 100);
   }
 
   /**

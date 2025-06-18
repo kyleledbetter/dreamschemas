@@ -147,13 +147,13 @@ export function useSeedingStream(options: SeedingStreamOptions = {}) {
       }));
 
       // Process the streaming response
-      const decoder = new TextDecoder();
-      let buffer = ''; // Buffer for incomplete messages
-      
-      const processStream = async () => {
+      const processStreamWithReader = async (streamReader: ReadableStreamDefaultReader<Uint8Array>) => {
+        const decoder = new TextDecoder();
+        let buffer = ''; // Buffer for incomplete messages
+        
         try {
           while (true) {
-            const { done, value } = await reader.read();
+            const { done, value } = await streamReader.read();
             
             if (done) {
               cleanup();
@@ -190,18 +190,23 @@ export function useSeedingStream(options: SeedingStreamOptions = {}) {
                       
                       // Handle continuation if needed
                       if (progress.needsContinuation && progress.continuationData) {
-                        console.log(`🔄 Continuing seeding from row ${progress.continuationData.processedRows}`);
+                        console.log(`🔄 Seeding needs continuation from row ${progress.continuationData.processedRows}`);
                         
-                        // Schedule continuation after a short delay
+                        // Close current stream first
+                        cleanup();
+                        
+                        // Schedule continuation after current stream is closed
                         setTimeout(async () => {
                           try {
+                            console.log(`🔄 Starting continuation request for rows ${progress.continuationData!.processedRows}+`);
+                            
                             // Get the current job data and update it for continuation
                             const continuationJobData = createJobData(job, {
                               processedRows: progress.continuationData!.processedRows,
                               chunkIndex: progress.continuationData!.nextChunkIndex,
                             });
                             
-                            // Start continuation request
+                            // Start new continuation request 
                             const continuationResponse = await fetch(streamUrl, {
                               method: "POST",
                               headers: {
@@ -215,11 +220,23 @@ export function useSeedingStream(options: SeedingStreamOptions = {}) {
                             });
                             
                             if (!continuationResponse.ok) {
-                              throw new Error(`Continuation failed: ${continuationResponse.statusText}`);
+                              const errorData = await continuationResponse.json();
+                              throw new Error(`Continuation failed: ${errorData.error || continuationResponse.statusText}`);
                             }
                             
-                            // We don't need to process this response as it will send its own progress updates
-                            console.log(`✅ Continuation request successful`);
+                            // Create a new reader for the continuation stream
+                            const continuationReader = continuationResponse.body?.getReader();
+                            if (!continuationReader) {
+                              throw new Error("Failed to get continuation stream");
+                            }
+                            
+                            readerRef.current = continuationReader;
+                            setState(prev => ({ ...prev, isConnected: true }));
+                            
+                            console.log(`✅ Continuation stream started successfully`);
+                            
+                            // Restart the stream processing with the new reader
+                            processStreamWithReader(continuationReader);
                             
                           } catch (continuationError) {
                             console.error('❌ Failed to continue seeding:', continuationError);
@@ -228,10 +245,11 @@ export function useSeedingStream(options: SeedingStreamOptions = {}) {
                               ...prev,
                               error,
                               isProcessing: false,
+                              isConnected: false,
                             }));
                             onError?.(error);
                           }
-                        }, 500); // Small delay to ensure current response is processed
+                        }, 1000); // Longer delay to ensure current stream is properly closed
                       }
                       break;
 
@@ -284,7 +302,7 @@ export function useSeedingStream(options: SeedingStreamOptions = {}) {
       };
 
       // Start processing the stream
-      processStream();
+      processStreamWithReader(reader);
 
     } catch (error) {
       const err = error instanceof Error ? error : new Error("Failed to start seeding");
