@@ -63,13 +63,19 @@ class CSVProcessor {
 
   // Chunked processing constants - Based on actual Supabase Edge Function limits
   private static readonly CHUNK_SIZE = 100; // Increased chunk size for efficiency
-  private static readonly MAX_CPU_TIME = 1200; // 1.2s CPU time limit (more aggressive)
+  private static readonly MAX_CPU_TIME = 1400; // 1.4s CPU time limit (more reasonable for multiple tables)
   
   // Cache for foreign key IDs to avoid repeated lookups
   private fkCache: Map<string, string | null> = new Map();
   
   // Cache for actual inserted property IDs by row index
   private propertyIdCache: Map<number, string> = new Map();
+  
+  // GLOBAL cache to track which properties we've already inserted (prevents massive duplication)
+  private static globalInsertedProperties: Set<string> = new Set();
+  
+  // GLOBAL cache for property IDs by address key (for FK resolution)
+  private static globalPropertyIdCache: Map<string, string> = new Map();
 
   constructor(request: SeedDataRequest, supabaseUrl: string, supabaseKey: string) {
     this.request = request;
@@ -192,14 +198,14 @@ class CSVProcessor {
 
       console.log(\`📦 Processing chunk: rows \${startIdx + 1}-\${endIdx} of \${totalRows}\`);
 
-      // Update progress
-      const progressPercent = 25 + ((startIdx + chunkLines.length) / totalRows) * 70;
-      this.updateProgress(
-        progressPercent,
-        "processing",
-        \`Processing rows \${startIdx + 1}-\${endIdx} of \${totalRows}\`
-      );
-      onProgress(this.progress);
+              // Update progress - more accurate calculation
+        const progressPercent = Math.min(95, 25 + ((startIdx + chunkLines.length) / totalRows) * 70);
+        this.updateProgress(
+          progressPercent,
+          "processing",
+          \`Processing rows \${startIdx + 1}-\${endIdx} of \${totalRows} (\${Math.round(progressPercent)}%)\`
+        );
+        onProgress(this.progress);
 
               // Process chunk data with timeout protection
         await this.processChunkDataWithTimeout(chunkData);
@@ -222,7 +228,18 @@ class CSVProcessor {
           nextChunkIndex: Math.ceil(newProcessedRows / chunkSize),
         };
         
-        // Immediately schedule the next chunk with fire-and-forget approach
+        // Send continuation progress update
+        const continuationPercent = Math.min(95, (newProcessedRows / totalRows) * 95);
+        this.updateProgress(
+          continuationPercent,
+          "processing",
+          \`Chunk complete: \${newProcessedRows}/\${totalRows} rows (\${Math.round(continuationPercent)}%)\`
+        );
+        onProgress(this.progress);
+        
+        // DUAL CONTINUATION STRATEGY:
+        // 1. Let UI handle continuation via needsContinuation flag (for progress tracking)
+        // 2. Also do internal fire-and-forget for redundancy (ensures processing continues)
         this.scheduleNextChunkImmediate(newProcessedRows, totalRows, chunkSize);
         
         return this.progress;
@@ -232,8 +249,12 @@ class CSVProcessor {
     console.log(\`🎉 ALL DATA PROCESSED: \${newProcessedRows}/\${totalRows} rows\`);
     this.progress.status = "completed";
     this.progress.overallProgress = 100;
+    this.progress.needsContinuation = false;
     this.updateProgress(100, "completing", "Data seeding completed successfully");
     onProgress(this.progress);
+    
+    // Final completion notification
+    console.log(\`📊 FINAL STATS: \${this.progress.successfulRows} successful, \${this.progress.failedRows} failed\`);
     
     return this.progress;
   }
@@ -296,30 +317,35 @@ class CSVProcessor {
     const schema = this.request.schema;
     const startTime = Date.now();
     
-    // CRITICAL: Process properties FIRST, then property-related tables
+    // STRATEGIC: Process tables in order of dependency and importance
     const tables = [...schema.tables].sort((a, b) => {
+      // PHASE 1: Properties (foundation)
       if (a.name === 'properties') return -1;
       if (b.name === 'properties') return 1;
       
-      // Property-related tables next
+      // PHASE 2: Lookup tables (needed for FKs)
+      const aIsLookup = this.isLookupTable(a);
+      const bIsLookup = this.isLookupTable(b);
+      if (aIsLookup && !bIsLookup) return -1;
+      if (!aIsLookup && bIsLookup) return 1;
+      
+      // PHASE 3: PERMITS (the main data we want!)
+      if (a.name === 'permits') return -1;
+      if (b.name === 'permits') return 1;
+      
+      // PHASE 4: Property-related tables
       const aIsPropertyRelated = a.name.startsWith('property_');
       const bIsPropertyRelated = b.name.startsWith('property_');
       if (aIsPropertyRelated && !bIsPropertyRelated) return -1;
       if (!aIsPropertyRelated && bIsPropertyRelated) return 1;
       
-      // Lookup tables next
-      const aIsLookup = this.isLookupTable(a);
-      const bIsLookup = this.isLookupTable(b);
-      if (aIsLookup && !bIsLookup) return -1;
-      if (!aIsLookup && bIsLookup) return 1;
       return 0;
     });
     
-    console.log(\`🚀 Processing \${tables.length} tables: \${tables.map(t => t.name).join(', ')}\`);
+    console.log(\`🚀 Processing \${tables.length} tables in order: \${tables.map(t => t.name).join(' → ')}\`);
     
-    // Process only 2-3 tables per chunk to avoid timeout
-    const maxTablesPerChunk = 3;
-    const tablesToProcess = tables.slice(0, maxTablesPerChunk);
+    // Process all tables - properties first, then others as time allows
+    const tablesToProcess = tables;
     
     // Process each table with timeout checks
     for (const table of tablesToProcess) {
@@ -330,18 +356,18 @@ class CSVProcessor {
         break;
       }
       
-      console.log(\`📋 Processing table: \${table.name}\`);
+      console.log(\`📋 Processing table: \${table.name} (CPU time: \${elapsedTime}ms)\`);
       
       try {
         // Quick data filtering 
-        const relevantData = this.filterDataForTable(chunkData, table);
+        const relevantData = await this.filterDataForTable(chunkData, table);
         
         if (relevantData.length === 0) {
           console.log(\`⏭️ No data for \${table.name}, skipping\`);
           continue;
         }
         
-        console.log(\`📊 \${table.name}: \${relevantData.length} rows to process\`);
+        console.log(\`📊 \${table.name}: \${relevantData.length} rows to process (priority table: \${table.name === 'permits' ? 'YES' : 'no'})\`);
         
         // Simple data mapping without complex FK resolution
         const insertData = [];
@@ -360,6 +386,17 @@ class CSVProcessor {
           if (table.name === 'properties') {
             const globalRowIndex = (this.request.processedRows || 0) + rowIndex;
             this.propertyIdCache.set(globalRowIndex, generatedId);
+            
+            // CRITICAL: Also cache by address for cross-table FK resolution
+            const streetAddress = this.findCsvValue(row, 'street_address') || this.findCsvValue(row, 'STREETADDRESS') || this.findCsvValue(row, 'PROPERTYFULLSTREETADDRESS') || '';
+            const city = this.findCsvValue(row, 'city') || this.findCsvValue(row, 'CITY') || '';
+            const state = this.findCsvValue(row, 'state') || this.findCsvValue(row, 'STATE') || '';
+            const zipCode = this.findCsvValue(row, 'zip_code') || this.findCsvValue(row, 'ZIP_CODE') || '';
+            
+            if (streetAddress) {
+              const addressKey = \`\${streetAddress}|\${city}|\${state}|\${zipCode}\`.toLowerCase();
+              CSVProcessor.globalPropertyIdCache.set(addressKey, generatedId);
+            }
           }
           
           let shouldSkipRow = false;
@@ -374,21 +411,39 @@ class CSVProcessor {
               // Handle FK columns with improved logic
               if (col.name.endsWith('_id') && col.name !== 'id') {
                 if (col.name === 'property_id') {
-                  // Use the actual property ID from the same row
-                  const globalRowIndex = (this.request.processedRows || 0) + rowIndex;
-                  const propertyId = this.propertyIdCache.get(globalRowIndex);
+                  // Try address-based lookup first (persistent across tables)
+                  const streetAddress = this.findCsvValue(row, 'street_address') || this.findCsvValue(row, 'STREETADDRESS') || this.findCsvValue(row, 'PROPERTYFULLSTREETADDRESS') || '';
+                  const city = this.findCsvValue(row, 'city') || this.findCsvValue(row, 'CITY') || '';
+                  const state = this.findCsvValue(row, 'state') || this.findCsvValue(row, 'STATE') || '';
+                  const zipCode = this.findCsvValue(row, 'zip_code') || this.findCsvValue(row, 'ZIP_CODE') || '';
+                  
+                  let propertyId = null;
+                  
+                  if (streetAddress) {
+                    const addressKey = \`\${streetAddress}|\${city}|\${state}|\${zipCode}\`.toLowerCase();
+                    propertyId = CSVProcessor.globalPropertyIdCache.get(addressKey);
+                  }
+                  
+                  // Fallback to row-based cache
+                  if (!propertyId) {
+                    const globalRowIndex = (this.request.processedRows || 0) + rowIndex;
+                    propertyId = this.propertyIdCache.get(globalRowIndex);
+                  }
+                  
+                  // Final fallback to any available property ID
+                  if (!propertyId) {
+                    const availableIds = Array.from(CSVProcessor.globalPropertyIdCache.values());
+                    if (availableIds.length > 0) {
+                      propertyId = availableIds[0];
+                    }
+                  }
+                  
                   if (propertyId) {
                     mapped[col.name] = propertyId;
                   } else {
-                    // Fallback to first available property ID or skip row
-                    const firstPropertyId = Array.from(this.propertyIdCache.values())[0];
-                    if (firstPropertyId) {
-                      mapped[col.name] = firstPropertyId;
-                    } else {
-                      // Skip this row if no property IDs available
-                      shouldSkipRow = true;
-                      break;
-                    }
+                    // Skip this row if no property IDs available
+                    shouldSkipRow = true;
+                    break;
                   }
                 } else {
                   // For other FKs, set to null to avoid constraint violations
@@ -425,28 +480,41 @@ class CSVProcessor {
         // Quick insert with upsert for safety
         console.log(\`💾 Inserting \${insertData.length} rows into \${table.name}\`);
         
-        const { error } = await this.supabaseClient
-          .from(table.name)
-          .upsert(insertData);
-          
-        if (error) {
-          console.log(\`❌ \${table.name} insert error:\`, error.message);
-          
-          // For properties table, this is critical - try individual inserts
-          if (table.name === 'properties') {
-            console.log(\`🔧 Properties failed - trying individual row inserts\`);
-            await this.insertRowsIndividuallyAndCache(table.name, insertData, this.request.processedRows || 0);
-          } else {
-            // For other tables, just log and continue
-            this.errors.push({
-              table: table.name,
-              error: error.message,
-              timestamp: new Date(),
-            });
-          }
+        // Handle different table strategies for insert/upsert
+        let insertSuccess = false;
+        
+        if (table.name === 'permits') {
+          // For permits, try individual inserts to handle duplicates gracefully
+          console.log(\`🔧 Permits: trying individual inserts to handle duplicate permit numbers\`);
+          await this.insertRowsIndividuallyWithContinueOnError(table.name, insertData);
+          insertSuccess = true;
         } else {
-          console.log(\`✅ \${table.name}: \${insertData.length} rows inserted\`);
-          this.progress.successfulRows = (this.progress.successfulRows || 0) + insertData.length;
+          // For other tables, use upsert
+          const { error } = await this.supabaseClient
+            .from(table.name)
+            .upsert(insertData);
+            
+          if (error) {
+            console.log(\`❌ \${table.name} insert error:\`, error.message);
+            
+            // For properties table, this is critical - try individual inserts
+            if (table.name === 'properties') {
+              console.log(\`🔧 Properties failed - trying individual row inserts\`);
+              await this.insertRowsIndividuallyAndCache(table.name, insertData, this.request.processedRows || 0);
+              insertSuccess = true;
+            } else {
+              // For other tables, just log and continue
+              this.errors.push({
+                table: table.name,
+                error: error.message,
+                timestamp: new Date(),
+              });
+            }
+          } else {
+            console.log(\`✅ \${table.name}: \${insertData.length} rows inserted\`);
+            this.progress.successfulRows = (this.progress.successfulRows || 0) + insertData.length;
+            insertSuccess = true;
+          }
         }
         
       } catch (error) {
@@ -470,6 +538,18 @@ class CSVProcessor {
     
     if (col.name === 'name') {
       return 'Unknown';
+    }
+    
+    if (col.name === 'zip_code') {
+      return '00000';
+    }
+    
+    if (col.name === 'state' && colType.includes('varchar(2)')) {
+      return 'FL';
+    }
+    
+    if (col.name === 'city') {
+      return 'Unknown City';
     }
     
     if (colType.includes('int')) {
@@ -630,13 +710,30 @@ class CSVProcessor {
       
       // Property features mappings
       ...(dbColumnName === 'air_conditioning' ? ['AIRCONDITIONING'] : []),
+      ...(dbColumnName === 'air_conditioning_type' ? ['AIRCONDITIONINGTYPE'] : []),
       ...(dbColumnName === 'garage_type_parking' ? ['GARAGETYPEPARKING'] : []),
       ...(dbColumnName === 'number_of_bedrooms' ? ['NUMBEROFBEDROOMS'] : []),
       ...(dbColumnName === 'number_of_baths' ? ['NUMBEROFBATHS'] : []),
       ...(dbColumnName === 'heating' ? ['HEATING'] : []),
+      ...(dbColumnName === 'heating_fuel_type' ? ['HEATINGFUELTYPE'] : []),
       ...(dbColumnName === 'exterior_walls' ? ['EXTERIORWALLS'] : []),
       ...(dbColumnName === 'foundation' ? ['FOUNDATION'] : []),
       ...(dbColumnName === 'roof_type' ? ['ROOFTYPE'] : []),
+      ...(dbColumnName === 'roof_cover' ? ['ROOFCOVER'] : []),
+      ...(dbColumnName === 'pool' ? ['POOL'] : []),
+      ...(dbColumnName === 'year_built' ? ['YEARBUILT', 'EFFECTIVEYEARBUILT'] : []),
+      ...(dbColumnName === 'style' ? ['STYLE'] : []),
+      ...(dbColumnName === 'building_quality' ? ['BUILDINGQUALITY'] : []),
+      
+      // Property assessment mappings
+      ...(dbColumnName === 'tax_year' ? ['TAXYEAR'] : []),
+      ...(dbColumnName === 'market_value_year' ? ['MARKETVALUEYEAR'] : []),
+      ...(dbColumnName === 'market_value_land' ? ['MARKETVALUELAND'] : []),
+      ...(dbColumnName === 'market_value_improvement' ? ['MARKETVALUEIMPROVEMENT'] : []),
+      ...(dbColumnName === 'total_market_value' ? ['TOTALMARKETVALUE'] : []),
+      ...(dbColumnName === 'assessed_land_value' ? ['ASSESSEDLANDVALUE'] : []),
+      ...(dbColumnName === 'assessed_improvement_value' ? ['ASSESSEDIMPROVEMENTVALUE'] : []),
+      ...(dbColumnName === 'total_assessed_value' ? ['TOTALASSESSEDVALUE'] : []),
       
       // Business-specific mappings
       ...(dbColumnName === 'business_name' ? ['company', 'business', 'contractor', 'builder', 'entity_name'] : []),
@@ -779,23 +876,27 @@ class CSVProcessor {
   /**
    * PERMIT-AWARE table filtering - understands that CSV contains permit data
    */
-  private filterDataForTable(data: any[], table: any): any[] {
+  private async filterDataForTable(data: any[], table: any): Promise<any[]> {
     if (!data || data.length === 0) return [];
     
     const tableName = table.name.toLowerCase();
     console.log(\`[PERMIT Filter] Processing table: \${tableName}\`);
     
-    // PROPERTIES: Create unique properties from address data
+    // PROPERTIES: Extract unique properties but ONLY NEW ones we haven't inserted before
     if (tableName === 'properties') {
-      const uniqueProperties = this.extractUniqueProperties(data);
-      console.log(\`[PERMIT Filter] Properties - extracted \${uniqueProperties.length} unique properties from \${data.length} permits\`);
-      return uniqueProperties;
+      console.log(\`[PERMIT Filter] Properties - checking for NEW properties in chunk of \${data.length} permits\`);
+      console.log(\`[PERMIT Filter] Properties - global cache currently has \${CSVProcessor.globalInsertedProperties.size} properties\`);
+      
+      const newUniqueProperties = this.extractOnlyNewProperties(data);
+      console.log(\`[PERMIT Filter] Properties - found \${newUniqueProperties.length} NEW properties (not already inserted)\`);
+      return newUniqueProperties;
     }
     
-    // PERMITS: Each CSV row is a permit
+    // PERMITS: Each CSV row is a permit (CRITICAL TABLE!)
     if (tableName === 'permits') {
-      console.log(\`[PERMIT Filter] Permits - using all \${data.length} rows (each row is a permit)\`);
-      return data;
+      const permitData = data.filter(row => this.hasPermitData(row));
+      console.log(\`[PERMIT Filter] Permits - filtered to \${permitData.length}/\${data.length} rows with permit data\`);
+      return permitData;
     }
     
     // BUILDERS: Extract unique builder names
@@ -805,18 +906,18 @@ class CSVProcessor {
       return uniqueBuilders;
     }
     
-    // PROPERTY_FEATURES: One per property, aggregate features
+    // PROPERTY_FEATURES: Use all data, map to existing property IDs via property_id FK
     if (tableName === 'property_features') {
-      const uniqueProperties = this.extractUniqueProperties(data);
-      console.log(\`[PERMIT Filter] Property Features - \${uniqueProperties.length} properties with features\`);
-      return uniqueProperties; // Will map features in column mapping
+      // Don't extract unique properties - use all data and rely on property_id FK mapping
+      console.log(\`[PERMIT Filter] Property Features - using all \${data.length} rows (will map to existing properties via FK)\`);
+      return data;
     }
     
-    // PROPERTY_ASSESSMENTS: One per property, use assessment data
+    // PROPERTY_ASSESSMENTS: Use all data, map to existing property IDs via property_id FK  
     if (tableName === 'property_assessments') {
-      const uniqueProperties = this.extractUniqueProperties(data);
-      console.log(\`[PERMIT Filter] Property Assessments - \${uniqueProperties.length} properties with assessment data\`);
-      return uniqueProperties;
+      // Don't extract unique properties - use all data and rely on property_id FK mapping
+      console.log(\`[PERMIT Filter] Property Assessments - using all \${data.length} rows (will map to existing properties via FK)\`);
+      return data;
     }
     
     // LOOKUP TABLES: Extract unique values
@@ -919,7 +1020,106 @@ class CSVProcessor {
   }
 
   /**
-   * Extract unique properties from permit data
+   * Extract ALL unique properties from the entire CSV file (used only in first chunk)
+   * This prevents massive duplication by processing all data once
+   */
+  private async extractAllUniquePropertiesFromCSV(): Promise<any[]> {
+    try {
+      // Get the entire CSV content
+      const csvContent = await this.getCSVContentFromStorage();
+      const lines = csvContent.split('\\n').filter(line => line.trim());
+      
+      if (lines.length <= 1) {
+        return [];
+      }
+      
+      // Parse all data
+      const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+      const dataLines = lines.slice(1);
+      
+      const allData = dataLines.map(line => {
+        const values = line.split(',').map(v => v.trim().replace(/"/g, ''));
+        const row: any = {};
+        headers.forEach((header, index) => {
+          row[header] = values[index] || '';
+        });
+        return row;
+      });
+      
+      console.log(\`📊 Extracting unique properties from \${allData.length} total permits\`);
+      
+      // Extract unique properties from ALL data
+      return this.extractUniqueProperties(allData);
+      
+    } catch (error) {
+      console.log(\`❌ Error extracting all unique properties:\`, error.message);
+      // Fallback to current chunk data if full CSV extraction fails
+      return [];
+    }
+  }
+
+  /**
+   * Extract ONLY NEW properties that we haven't already inserted (prevents massive duplication)
+   */
+  private extractOnlyNewProperties(data: any[]): any[] {
+    const newPropertyMap = new Map<string, any>();
+    let skippedDuplicates = 0;
+    
+    data.forEach(row => {
+      // Create property key from address
+      const streetAddress = row['STREETADDRESS'] || row['PROPERTYFULLSTREETADDRESS'] || '';
+      const city = row['CITY'] || '';
+      const state = row['STATE'] || '';
+      const zipCode = row['ZIP_CODE'] || '';
+      
+      if (!streetAddress) return; // Skip if no address
+      
+      const propertyKey = \`\${streetAddress}|\${city}|\${state}|\${zipCode}\`.toLowerCase();
+      
+      // CRITICAL: Check if we've already inserted this property globally
+      if (CSVProcessor.globalInsertedProperties.has(propertyKey)) {
+        skippedDuplicates++;
+        return; // Skip - we've already inserted this property
+      }
+      
+      // Also check if we've already seen it in this chunk
+      if (newPropertyMap.has(propertyKey)) {
+        return; // Skip - already in this chunk
+      }
+      
+      // This is a NEW property - add it to the map
+      // Clean and validate state (must be 2 chars)
+      let cleanState = state.replace(/[^A-Za-z]/g, '').toUpperCase();
+      if (cleanState.length > 2) cleanState = cleanState.substring(0, 2);
+      if (cleanState.length === 1) cleanState = cleanState + 'L'; // FL -> FL, F -> FL
+      if (cleanState.length === 0) cleanState = 'FL'; // Default to FL
+      
+      // Clean and validate zip_code (required field)
+      let cleanZip = zipCode.replace(/[^0-9-]/g, '');
+      if (cleanZip.length === 0) cleanZip = '00000'; // Default zip
+      if (cleanZip.length > 10) cleanZip = cleanZip.substring(0, 10);
+      
+      newPropertyMap.set(propertyKey, {
+        street_address: streetAddress,
+        city: city || 'Unknown City',
+        state: cleanState,
+        zip_code: cleanZip,
+        latitude: row['LATITUDE'] || null,
+        longitude: row['LONGITUDE'] || null,
+        parcel_number: row['PARCEL_NUMBER'] || row['APN'] || null,
+        subdivision: row['SUBDIVISION'] || null,
+        county_fips: row['COUNTY_FIPS'] || null,
+        // Store the property key for global cache tracking
+        _propertyKey: propertyKey
+      });
+    });
+    
+    console.log(\`📍 Found \${newPropertyMap.size} NEW properties, skipped \${skippedDuplicates} already-inserted properties\`);
+    return Array.from(newPropertyMap.values());
+  }
+
+  /**
+   * Extract unique properties from permit data (legacy method for compatibility)
    */
   private extractUniqueProperties(data: any[]): any[] {
     const propertyMap = new Map<string, any>();
@@ -936,11 +1136,22 @@ class CSVProcessor {
       const propertyKey = \`\${streetAddress}|\${city}|\${state}|\${zipCode}\`.toLowerCase();
       
       if (!propertyMap.has(propertyKey)) {
+        // Clean and validate state (must be 2 chars)
+        let cleanState = state.replace(/[^A-Za-z]/g, '').toUpperCase();
+        if (cleanState.length > 2) cleanState = cleanState.substring(0, 2);
+        if (cleanState.length === 1) cleanState = cleanState + 'L'; // FL -> FL, F -> FL
+        if (cleanState.length === 0) cleanState = 'FL'; // Default to FL
+        
+        // Clean and validate zip_code (required field)
+        let cleanZip = zipCode.replace(/[^0-9-]/g, '');
+        if (cleanZip.length === 0) cleanZip = '00000'; // Default zip
+        if (cleanZip.length > 10) cleanZip = cleanZip.substring(0, 10);
+        
         propertyMap.set(propertyKey, {
           street_address: streetAddress,
-          city: city,
-          state: state,
-          zip_code: zipCode,
+          city: city || 'Unknown City',
+          state: cleanState,
+          zip_code: cleanZip,
           latitude: row['LATITUDE'] || null,
           longitude: row['LONGITUDE'] || null,
           parcel_number: row['PARCEL_NUMBER'] || row['APN'] || null,
@@ -952,6 +1163,7 @@ class CSVProcessor {
       }
     });
     
+    console.log(\`📍 Extracted \${propertyMap.size} unique properties from \${data.length} permits\`);
     return Array.from(propertyMap.values());
   }
   
@@ -979,10 +1191,15 @@ class CSVProcessor {
   }
   
   /**
-   * Check if row has permit-related data
+   * Check if row has permit-related data - ENHANCED for our PERMIT CSV
    */
   private hasPermitData(row: any): boolean {
     const permitFields = [
+      // Direct permit fields from CSV
+      'PERMIT_NUMBER', 'DESCRIPTION', 'BUSINESS_NAME', 'JOB_VALUE', 'FEES',
+      'INITIAL_STATUS_DATE', 'INITIAL_STATUS', 'LATEST_STATUS_DATE', 'LATEST_STATUS',
+      'APPLIED_DATE', 'ISSUED_DATE', 'PROJECT_TYPE', 'PERMIT_JURISDICTION',
+      // Fallback generic fields
       'permit_number', 'permit_type', 'type', 'description', 
       'permit_jurisdiction', 'job_value', 'fees', 'applied_date',
       'issued_date', 'project_type', 'business_name'
@@ -990,7 +1207,7 @@ class CSVProcessor {
     
     return permitFields.some(field => {
       const value = this.findCsvValue(row, field);
-      return value && value !== '' && value !== 'null';
+      return value && value !== '' && value !== 'null' && value !== 'NULL';
     });
   }
   
@@ -1412,7 +1629,7 @@ class CSVProcessor {
       console.log('Processing table:', table.name, 'with chunk of', chunkData.length, 'rows');
       
       // Filter and map data for this table
-      const relevantData = this.filterDataForTable(chunkData, table);
+      const relevantData = await this.filterDataForTable(chunkData, table);
       const tableData = this.mapDataToTable(relevantData, table);
       
       if (tableData.length > 0) {
@@ -1423,7 +1640,18 @@ class CSVProcessor {
           const cpuTimeUsed = Date.now() - this.startTime;
           if (cpuTimeUsed > CSVProcessor.MAX_CPU_TIME) {
             console.log(\`⏰ CPU limit reached during table processing (\${cpuTimeUsed}ms), scheduling continuation...\`);
-            await this.scheduleNextChunk();
+            
+            // Update progress and schedule continuation
+            this.progress.processedRows += chunkData.length;
+            this.progress.needsContinuation = true;
+            this.progress.continuationData = {
+              processedRows: this.progress.processedRows,
+              totalRows: await this.getTotalRowCount(),
+              nextChunkIndex: Math.ceil(this.progress.processedRows / CSVProcessor.CHUNK_SIZE),
+            };
+            
+            // Fire-and-forget continuation for redundancy
+            this.scheduleNextChunkImmediate(this.progress.processedRows, await this.getTotalRowCount(), CSVProcessor.CHUNK_SIZE);
             return;
           }
           
@@ -1454,21 +1682,28 @@ class CSVProcessor {
             }
           } else {
             // For main tables, use upsert with error resilience
-            const { error } = await this.supabaseClient
-              .from(table.name)
-              .upsert(tableData);
-            
-            if (error) {
-              if (['23505', '23503', '23502'].includes(error.code)) {
-                console.log(\`⚠️ \${table.name} constraint error (continuing):\`, error.message);
-              } else {
-                console.log(\`❌ \${table.name} upsert error:\`, error.message);
-                // Try individual inserts for better error isolation
-                await this.insertRowsIndividually(table.name, tableData);
-              }
+            if (table.name === 'properties') {
+              // Simple properties handling - just insert and ignore duplicates gracefully
+              console.log(\`🏠 Properties: Inserting \${tableData.length} properties with duplicate handling\`);
+              await this.insertPropertiesWithSimpleDeduplication(table.name, tableData);
             } else {
-              this.progress.successfulRows += tableData.length;
-              console.log(\`✅ \${table.name}: \${tableData.length} rows inserted\`);
+              // Standard upsert for other main tables
+              const { error } = await this.supabaseClient
+                .from(table.name)
+                .upsert(tableData);
+              
+              if (error) {
+                if (['23505', '23503', '23502'].includes(error.code)) {
+                  console.log(\`⚠️ \${table.name} constraint error (continuing):\`, error.message);
+                } else {
+                  console.log(\`❌ \${table.name} upsert error:\`, error.message);
+                  // Try individual inserts for better error isolation
+                  await this.insertRowsIndividually(table.name, tableData);
+                }
+              } else {
+                this.progress.successfulRows += tableData.length;
+                console.log(\`✅ \${table.name}: \${tableData.length} rows inserted\`);
+              }
             }
           }
         } catch (error) {
@@ -1487,11 +1722,12 @@ class CSVProcessor {
 
   /**
    * Schedule the next chunk to be processed (immediate fire-and-forget)
+   * Note: This is for internal Edge Function continuations only
    */
   private scheduleNextChunkImmediate(processedRows: number, totalRows: number, chunkSize: number): void {
     const nextChunkIndex = Math.floor(processedRows / chunkSize);
     
-    console.log(\`🚀 Immediately scheduling next chunk: \${nextChunkIndex}\`);
+    console.log(\`🚀 Internal continuation scheduling chunk: \${nextChunkIndex} (rows \${processedRows}/\${totalRows})\`);
     
     const nextRequest = {
       fileId: this.request.fileId,
@@ -1503,15 +1739,16 @@ class CSVProcessor {
       processedRows: processedRows
     };
 
-    // Fire-and-forget continuation request
-    fetch(\`https://\${this.request.schema?.projectId || 'unknown'}.supabase.co/functions/v1/seed-data?stream=true\`, {
+    // Fire-and-forget continuation request to the Edge Function directly
+    // This bypasses the UI streaming but ensures processing continues
+    fetch(\`https://\${this.request.schema?.projectId || 'unknown'}.supabase.co/functions/v1/seed-data\`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(nextRequest)
     }).then(response => {
-      console.log(\`✅ Continuation scheduled: \${response.ok ? 'success' : 'failed'}\`);
+      console.log(\`✅ Internal continuation scheduled: \${response.ok ? 'success' : 'failed'}\`);
     }).catch(error => {
-      console.log(\`❌ Continuation failed:\`, error.message);
+      console.log(\`❌ Internal continuation failed:\`, error.message);
     });
   }
 
@@ -1540,6 +1777,165 @@ class CSVProcessor {
     }
     
     console.log(\`📊 \${tableName} individual inserts: \${successful} success, \${failed} failed\`);
+    this.progress.successfulRows += successful;
+    this.progress.failedRows += failed;
+  }
+
+  /**
+   * Insert rows individually with graceful handling of constraint errors (for permits)
+   */
+  private async insertRowsIndividuallyWithContinueOnError(tableName: string, rows: any[]): Promise<void> {
+    let successful = 0;
+    let failed = 0;
+    let duplicates = 0;
+    
+    for (const row of rows) {
+      try {
+        const { error } = await this.supabaseClient
+          .from(tableName)
+          .insert([row]);
+          
+        if (error) {
+          // Check if it's a duplicate key constraint (permit_number_key)
+          if (error.code === '23505' && error.message.includes('permit_number')) {
+            duplicates++;
+            console.log(\`⚠️ Duplicate permit number skipped: \${row.permit_number || 'unknown'}\`);
+          } else {
+            failed++;
+            console.log(\`❌ Individual row error in \${tableName}:\`, error.message);
+          }
+        } else {
+          successful++;
+        }
+      } catch (error) {
+        failed++;
+        console.log(\`❌ Unexpected error inserting \${tableName} row:\`, error);
+      }
+    }
+    
+    console.log(\`📊 \${tableName} individual inserts: \${successful} success, \${duplicates} duplicates skipped, \${failed} failed\`);
+    this.progress.successfulRows += successful;
+    this.progress.failedRows += failed;
+  }
+
+  /**
+   * Insert properties with global cache tracking (prevents massive duplication across chunks)
+   */
+  private async insertPropertiesWithSimpleDeduplication(tableName: string, rows: any[]): Promise<void> {
+    let successful = 0;
+    let failed = 0;
+    let duplicatesSkipped = 0;
+    
+    console.log(\`🏠 Processing \${rows.length} NEW properties with global deduplication...\`);
+    
+    // Try bulk insert first (fastest approach)
+    try {
+      // Remove the _propertyKey field before inserting
+      const cleanRows = rows.map(row => {
+        const { _propertyKey, ...cleanRow } = row;
+        return cleanRow;
+      });
+      
+      const { data, error } = await this.supabaseClient
+        .from(tableName)
+        .insert(cleanRows)
+        .select('id, street_address, city, state, zip_code');
+        
+      if (!error && data) {
+        successful = data.length;
+        console.log(\`✅ Properties bulk insert: \${successful} rows inserted successfully\`);
+        
+        // CRITICAL: Add all successfully inserted properties to global cache
+        data.forEach((insertedProperty, index) => {
+          const originalRow = rows[index];
+          if (originalRow._propertyKey) {
+            CSVProcessor.globalInsertedProperties.add(originalRow._propertyKey);
+            CSVProcessor.globalPropertyIdCache.set(originalRow._propertyKey, insertedProperty.id);
+          }
+          
+          // ALSO cache by address for FK resolution
+          const streetAddress = insertedProperty.street_address || '';
+          const city = insertedProperty.city || '';
+          const state = insertedProperty.state || '';
+          const zipCode = insertedProperty.zip_code || '';
+          
+          if (streetAddress) {
+            const addressKey = \`\${streetAddress}|\${city}|\${state}|\${zipCode}\`.toLowerCase();
+            CSVProcessor.globalPropertyIdCache.set(addressKey, insertedProperty.id);
+          }
+        });
+        
+        this.progress.successfulRows += successful;
+        return;
+      }
+      
+      console.log(\`⚠️ Bulk insert failed, trying individual inserts:\`, error?.message);
+    } catch (error) {
+      console.log(\`⚠️ Bulk insert failed, trying individual inserts:\`, error);
+    }
+    
+    // Fallback to individual inserts with duplicate handling
+    for (const row of rows) {
+      try {
+        // Remove the _propertyKey field before inserting
+        const { _propertyKey, ...cleanRow } = row;
+        
+        const { data, error } = await this.supabaseClient
+          .from(tableName)
+          .insert([cleanRow])
+          .select('id, street_address, city, state, zip_code')
+          .single();
+          
+        if (error) {
+          // Check if it's a duplicate constraint error
+          if (error.code === '23505' || error.message.includes('duplicate') || error.message.includes('unique')) {
+            duplicatesSkipped++;
+            // Even if DB insert failed, mark as "inserted" to prevent future attempts
+            if (_propertyKey) {
+              CSVProcessor.globalInsertedProperties.add(_propertyKey);
+            }
+            // Don't log every duplicate to reduce noise
+            if (duplicatesSkipped <= 5) {
+              console.log(\`⚠️ Duplicate property skipped: \${row.street_address}, \${row.city}\`);
+            }
+          } else {
+            failed++;
+            console.log(\`❌ Property insert error:\`, error.message);
+          }
+        } else {
+          successful++;
+          
+          // CRITICAL: Add successfully inserted property to global cache
+          if (_propertyKey && data?.id) {
+            CSVProcessor.globalInsertedProperties.add(_propertyKey);
+            CSVProcessor.globalPropertyIdCache.set(_propertyKey, data.id);
+            // Also cache for FK resolution in this processing session
+            this.fkCache.set(\`property_\${_propertyKey}\`, data.id);
+          }
+          
+          // ALSO cache by address for FK resolution
+          if (data?.id) {
+            const streetAddress = data.street_address || '';
+            const city = data.city || '';
+            const state = data.state || '';
+            const zipCode = data.zip_code || '';
+            
+            if (streetAddress) {
+              const addressKey = \`\${streetAddress}|\${city}|\${state}|\${zipCode}\`.toLowerCase();
+              CSVProcessor.globalPropertyIdCache.set(addressKey, data.id);
+            }
+          }
+        }
+      } catch (error) {
+        failed++;
+        if (failed <= 3) {
+          console.log(\`❌ Unexpected property error:\`, error);
+        }
+      }
+    }
+    
+    console.log(\`📊 Properties final results: \${successful} success, \${duplicatesSkipped} duplicates skipped, \${failed} failed\`);
+    console.log(\`📊 Global cache now has \${CSVProcessor.globalInsertedProperties.size} total properties\`);
     this.progress.successfulRows += successful;
     this.progress.failedRows += failed;
   }
@@ -1990,24 +2386,29 @@ serve(async (req: Request) => {
             // Process data with progress callbacks
             const result = await processor.processCSVChunk(progressHandler);
 
-            // Send completion message
-            const completionData = JSON.stringify({
-              type: "complete",
-              data: {
-                success: true,
-                jobId: request.jobId,
-                statistics: {
-                  totalRows: result.successfulRows + result.failedRows,
-                  successfulRows: result.successfulRows,
-                  failedRows: result.failedRows,
-                  errors: result.errors,
-                  warnings: result.warnings,
+            // Only send completion if truly completed (no continuation needed)
+            if (result.status === "completed" && !result.needsContinuation) {
+              const completionData = JSON.stringify({
+                type: "complete",
+                data: {
+                  success: true,
+                  jobId: request.jobId,
+                  statistics: {
+                    totalRows: result.successfulRows + result.failedRows,
+                    successfulRows: result.successfulRows,
+                    failedRows: result.failedRows,
+                    errors: result.errors,
+                    warnings: result.warnings,
+                  },
                 },
-              },
-            });
-            
-            writer.write(encoder.encode(\`data: \${completionData}\\n\\n\`));
-            writer.write(encoder.encode(\`data: [DONE]\\n\\n\`));
+              });
+              
+              writer.write(encoder.encode(\`data: \${completionData}\\n\\n\`));
+              writer.write(encoder.encode(\`data: [DONE]\\n\\n\`));
+            } else if (result.needsContinuation) {
+              // Just send the progress update, don't close the stream
+              console.log(\`🔄 Stream continuing for next chunk - not closing\`);
+            }
             
           } catch (error) {
             // Send error message

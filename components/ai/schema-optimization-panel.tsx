@@ -450,11 +450,9 @@ export function SchemaOptimizationPanel({
         <CardHeader>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-primary/10">
-                <Sparkles className="h-6 w-6 text-primary" />
-              </div>
               <div>
                 <CardTitle className="flex items-center gap-2">
+                  <Sparkles className="size-5" />
                   AI Schema Optimization
                   <Badge className="bg-green-100 text-green-800">
                     {summary.confidenceScore}% Confidence

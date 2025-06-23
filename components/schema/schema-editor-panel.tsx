@@ -1,31 +1,31 @@
-"use client"
+"use client";
 
-import React, { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Checkbox } from '@/components/ui/checkbox';
-import { 
-  Collapsible, 
-  CollapsibleContent, 
-  CollapsibleTrigger 
-} from '@/components/ui/collapsible';
+import React, { useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+} from "@/components/ui/dropdown-menu";
 import {
   DatabaseSchema,
   Table,
   Column,
   Relationship,
   PostgresType,
-  SchemaValidationResult
-} from '@/types/schema.types';
+  SchemaValidationResult,
+} from "@/types/schema.types";
 import {
   ChevronDown,
   ChevronRight,
@@ -36,9 +36,9 @@ import {
   Info,
   Database,
   Table as TableIcon,
-  Link
-} from 'lucide-react';
-import { cn } from '@/lib/utils';
+  Link,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface SchemaEditorPanelProps {
   schema: DatabaseSchema;
@@ -50,16 +50,34 @@ interface SchemaEditorPanelProps {
 }
 
 const POSTGRES_TYPES: PostgresType[] = [
-  'VARCHAR', 'TEXT', 'CHAR',
-  'INTEGER', 'BIGINT', 'SMALLINT', 'NUMERIC', 'DECIMAL', 'REAL', 'DOUBLE PRECISION',
-  'BOOLEAN',
-  'DATE', 'TIME', 'TIMESTAMP', 'TIMESTAMPTZ',
-  'UUID',
-  'JSONB', 'JSON',
-  'ARRAY', 'ENUM'
+  "VARCHAR",
+  "TEXT",
+  "CHAR",
+  "INTEGER",
+  "BIGINT",
+  "SMALLINT",
+  "NUMERIC",
+  "DECIMAL",
+  "REAL",
+  "DOUBLE PRECISION",
+  "BOOLEAN",
+  "DATE",
+  "TIME",
+  "TIMESTAMP",
+  "TIMESTAMPTZ",
+  "UUID",
+  "JSONB",
+  "JSON",
+  "ARRAY",
+  "ENUM",
 ];
 
-const REFERENTIAL_ACTIONS = ['CASCADE', 'SET NULL', 'RESTRICT', 'NO ACTION'] as const;
+const REFERENTIAL_ACTIONS = [
+  "CASCADE",
+  "SET NULL",
+  "RESTRICT",
+  "NO ACTION",
+] as const;
 
 export function SchemaEditorPanel({
   schema,
@@ -67,19 +85,23 @@ export function SchemaEditorPanel({
   selectedTable,
   selectedRelationship,
   validationResult,
-  readOnly = false
+  readOnly = false,
 }: SchemaEditorPanelProps) {
-  const [activeTab, setActiveTab] = useState<'schema' | 'table' | 'relationship' | 'validation'>('schema');
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['general']));
+  const [activeTab, setActiveTab] = useState<
+    "schema" | "table" | "relationship" | "validation"
+  >("schema");
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(
+    new Set(["general"])
+  );
 
   // Auto-select tab based on selection
   React.useEffect(() => {
     if (selectedTable) {
-      setActiveTab('table');
+      setActiveTab("table");
     } else if (selectedRelationship) {
-      setActiveTab('relationship');
+      setActiveTab("relationship");
     } else if (validationResult && !validationResult.isValid) {
-      setActiveTab('validation');
+      setActiveTab("validation");
     }
   }, [selectedTable, selectedRelationship, validationResult]);
 
@@ -98,23 +120,27 @@ export function SchemaEditorPanel({
     onSchemaChange({
       ...schema,
       ...updates,
-      updatedAt: new Date()
+      updatedAt: new Date(),
     });
   };
 
   const updateTable = (tableId: string, updates: Partial<Table>) => {
     if (readOnly) return;
-    const updatedTables = schema.tables.map(table =>
+    const updatedTables = schema.tables.map((table) =>
       table.id === tableId ? { ...table, ...updates } : table
     );
     updateSchema({ tables: updatedTables });
   };
 
-  const updateColumn = (tableId: string, columnId: string, updates: Partial<Column>) => {
+  const updateColumn = (
+    tableId: string,
+    columnId: string,
+    updates: Partial<Column>
+  ) => {
     if (readOnly) return;
-    const updatedTables = schema.tables.map(table => {
+    const updatedTables = schema.tables.map((table) => {
       if (table.id === tableId) {
-        const updatedColumns = table.columns.map(col =>
+        const updatedColumns = table.columns.map((col) =>
           col.id === columnId ? { ...col, ...updates } : col
         );
         return { ...table, columns: updatedColumns };
@@ -128,34 +154,37 @@ export function SchemaEditorPanel({
     if (readOnly) return;
     const newColumn: Column = {
       id: `col_${Date.now()}`,
-      name: 'new_column',
-      type: 'VARCHAR',
+      name: "new_column",
+      type: "TEXT",
       length: 255,
       nullable: true,
       constraints: [],
     };
-    
-    const table = schema.tables.find(t => t.id === tableId);
+
+    const table = schema.tables.find((t) => t.id === tableId);
     if (table) {
-      updateTable(tableId, { 
-        columns: [...table.columns, newColumn] 
+      updateTable(tableId, {
+        columns: [...table.columns, newColumn],
       });
     }
   };
 
   const deleteColumn = (tableId: string, columnId: string) => {
     if (readOnly) return;
-    const table = schema.tables.find(t => t.id === tableId);
+    const table = schema.tables.find((t) => t.id === tableId);
     if (table) {
-      updateTable(tableId, { 
-        columns: table.columns.filter(col => col.id !== columnId) 
+      updateTable(tableId, {
+        columns: table.columns.filter((col) => col.id !== columnId),
       });
     }
   };
 
-  const updateRelationship = (relationshipId: string, updates: Partial<Relationship>) => {
+  const updateRelationship = (
+    relationshipId: string,
+    updates: Partial<Relationship>
+  ) => {
     if (readOnly) return;
-    const updatedRelationships = schema.relationships.map(rel =>
+    const updatedRelationships = schema.relationships.map((rel) =>
       rel.id === relationshipId ? { ...rel, ...updates } : rel
     );
     updateSchema({ relationships: updatedRelationships });
@@ -165,36 +194,42 @@ export function SchemaEditorPanel({
     if (readOnly) return;
     const newTable: Table = {
       id: `table_${Date.now()}`,
-      name: 'new_table',
-      columns: [{
-        id: `col_${Date.now()}`,
-        name: 'id',
-        type: 'UUID',
-        nullable: false,
-        defaultValue: 'gen_random_uuid()',
-        constraints: [{ type: 'PRIMARY KEY' }]
-      }],
+      name: "new_table",
+      columns: [
+        {
+          id: `col_${Date.now()}`,
+          name: "id",
+          type: "UUID",
+          nullable: false,
+          defaultValue: "uuid_generate_v4()",
+          constraints: [{ type: "PRIMARY KEY" }],
+        },
+      ],
       indexes: [],
-      position: { x: 0, y: 0 }
+      position: { x: 0, y: 0 },
     };
-    
-    updateSchema({ 
-      tables: [...schema.tables, newTable] 
+
+    updateSchema({
+      tables: [...schema.tables, newTable],
     });
   };
 
   const renderSchemaTab = () => (
     <div className="space-y-4">
-      <Collapsible 
-        open={expandedSections.has('general')}
-        onOpenChange={() => toggleSection('general')}
+      <Collapsible
+        open={expandedSections.has("general")}
+        onOpenChange={() => toggleSection("general")}
       >
         <CollapsibleTrigger className="flex items-center justify-between w-full p-2 hover:bg-gray-50 rounded">
           <div className="flex items-center gap-2">
             <Database className="h-4 w-4" />
             <span className="font-medium">General</span>
           </div>
-          {expandedSections.has('general') ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          {expandedSections.has("general") ? (
+            <ChevronDown className="h-4 w-4" />
+          ) : (
+            <ChevronRight className="h-4 w-4" />
+          )}
         </CollapsibleTrigger>
         <CollapsibleContent className="px-2 pb-2 space-y-3">
           <div>
@@ -219,26 +254,32 @@ export function SchemaEditorPanel({
         </CollapsibleContent>
       </Collapsible>
 
-      <Collapsible 
-        open={expandedSections.has('tables')}
-        onOpenChange={() => toggleSection('tables')}
+      <Collapsible
+        open={expandedSections.has("tables")}
+        onOpenChange={() => toggleSection("tables")}
       >
         <CollapsibleTrigger className="flex items-center justify-between w-full p-2 hover:bg-gray-50 rounded">
           <div className="flex items-center gap-2">
             <TableIcon className="h-4 w-4" />
             <span className="font-medium">Tables</span>
           </div>
-          {expandedSections.has('tables') ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          {expandedSections.has("tables") ? (
+            <ChevronDown className="h-4 w-4" />
+          ) : (
+            <ChevronRight className="h-4 w-4" />
+          )}
         </CollapsibleTrigger>
         <CollapsibleContent className="px-2 pb-2 space-y-2">
-          {schema.tables.map(table => (
+          {schema.tables.map((table) => (
             <div
               key={table.id}
               className={cn(
                 "p-2 rounded border cursor-pointer transition-colors",
-                selectedTable?.id === table.id ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:bg-gray-50"
+                selectedTable?.id === table.id
+                  ? "border-blue-500 bg-blue-50"
+                  : "border-gray-200 hover:bg-gray-50"
               )}
-              onClick={() => setActiveTab('table')}
+              onClick={() => setActiveTab("table")}
             >
               <div className="flex items-center justify-between">
                 <span className="font-medium text-sm">{table.name}</span>
@@ -262,26 +303,32 @@ export function SchemaEditorPanel({
         </CollapsibleContent>
       </Collapsible>
 
-      <Collapsible 
-        open={expandedSections.has('relationships')}
-        onOpenChange={() => toggleSection('relationships')}
+      <Collapsible
+        open={expandedSections.has("relationships")}
+        onOpenChange={() => toggleSection("relationships")}
       >
         <CollapsibleTrigger className="flex items-center justify-between w-full p-2 hover:bg-gray-50 rounded">
           <div className="flex items-center gap-2">
             <Link className="h-4 w-4" />
             <span className="font-medium">Relationships</span>
           </div>
-          {expandedSections.has('relationships') ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          {expandedSections.has("relationships") ? (
+            <ChevronDown className="h-4 w-4" />
+          ) : (
+            <ChevronRight className="h-4 w-4" />
+          )}
         </CollapsibleTrigger>
         <CollapsibleContent className="px-2 pb-2 space-y-2">
-          {schema.relationships.map(relationship => (
+          {schema.relationships.map((relationship) => (
             <div
               key={relationship.id}
               className={cn(
                 "p-2 rounded border cursor-pointer transition-colors",
-                selectedRelationship?.id === relationship.id ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:bg-gray-50"
+                selectedRelationship?.id === relationship.id
+                  ? "border-blue-500 bg-blue-50"
+                  : "border-gray-200 hover:bg-gray-50"
               )}
-              onClick={() => setActiveTab('relationship')}
+              onClick={() => setActiveTab("relationship")}
             >
               <div className="text-xs">
                 <span className="font-medium">{relationship.sourceTable}</span>
@@ -317,7 +364,9 @@ export function SchemaEditorPanel({
           <Input
             id="table-name"
             value={selectedTable.name}
-            onChange={(e) => updateTable(selectedTable.id, { name: e.target.value })}
+            onChange={(e) =>
+              updateTable(selectedTable.id, { name: e.target.value })
+            }
             disabled={readOnly}
           />
         </div>
@@ -326,8 +375,10 @@ export function SchemaEditorPanel({
           <Label htmlFor="table-comment">Comment</Label>
           <Input
             id="table-comment"
-            value={selectedTable.comment || ''}
-            onChange={(e) => updateTable(selectedTable.id, { comment: e.target.value })}
+            value={selectedTable.comment || ""}
+            onChange={(e) =>
+              updateTable(selectedTable.id, { comment: e.target.value })
+            }
             disabled={readOnly}
             placeholder="Optional table description"
           />
@@ -347,15 +398,19 @@ export function SchemaEditorPanel({
               </Button>
             )}
           </div>
-          
+
           <div className="space-y-2 max-h-64 overflow-y-auto">
-            {selectedTable.columns.map(column => (
+            {selectedTable.columns.map((column) => (
               <Card key={column.id} className="p-3">
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Input
                       value={column.name}
-                      onChange={(e) => updateColumn(selectedTable.id, column.id, { name: e.target.value })}
+                      onChange={(e) =>
+                        updateColumn(selectedTable.id, column.id, {
+                          name: e.target.value,
+                        })
+                      }
                       disabled={readOnly}
                       className="font-medium"
                     />
@@ -363,29 +418,39 @@ export function SchemaEditorPanel({
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => deleteColumn(selectedTable.id, column.id)}
+                        onClick={() =>
+                          deleteColumn(selectedTable.id, column.id)
+                        }
                         className="text-red-600"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     )}
                   </div>
-                  
+
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <Label className="text-xs">Type</Label>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="outline" size="sm" className="w-full justify-between">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full justify-between"
+                          >
                             {column.type}
                             <ChevronDown className="h-3 w-3" />
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent>
-                          {POSTGRES_TYPES.map(type => (
+                          {POSTGRES_TYPES.map((type) => (
                             <DropdownMenuItem
                               key={type}
-                              onClick={() => updateColumn(selectedTable.id, column.id, { type })}
+                              onClick={() =>
+                                updateColumn(selectedTable.id, column.id, {
+                                  type,
+                                })
+                              }
                             >
                               {type}
                             </DropdownMenuItem>
@@ -393,16 +458,20 @@ export function SchemaEditorPanel({
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
-                    
-                    {(column.type === 'VARCHAR' || column.type === 'CHAR') && (
+
+                    {(column.type === "VARCHAR" || column.type === "CHAR") && (
                       <div>
                         <Label className="text-xs">Length</Label>
                         <Input
                           type="number"
-                          value={column.length || ''}
+                          value={column.length || ""}
                           onChange={(e) => {
                             const value = parseInt(e.target.value);
-                            updateColumn(selectedTable.id, column.id, isNaN(value) ? {} : { length: value });
+                            updateColumn(
+                              selectedTable.id,
+                              column.id,
+                              isNaN(value) ? {} : { length: value }
+                            );
                           }}
                           disabled={readOnly}
                           className="text-xs"
@@ -416,10 +485,19 @@ export function SchemaEditorPanel({
                       <Checkbox
                         id={`nullable-${column.id}`}
                         checked={!column.nullable}
-                        onCheckedChange={(checked) => updateColumn(selectedTable.id, column.id, { nullable: !checked })}
+                        onCheckedChange={(checked) =>
+                          updateColumn(selectedTable.id, column.id, {
+                            nullable: !checked,
+                          })
+                        }
                         disabled={readOnly}
                       />
-                      <Label htmlFor={`nullable-${column.id}`} className="text-xs">NOT NULL</Label>
+                      <Label
+                        htmlFor={`nullable-${column.id}`}
+                        className="text-xs"
+                      >
+                        NOT NULL
+                      </Label>
                     </div>
                   </div>
 
@@ -457,8 +535,12 @@ export function SchemaEditorPanel({
           <Label htmlFor="relationship-name">Relationship Name</Label>
           <Input
             id="relationship-name"
-            value={selectedRelationship.name || ''}
-            onChange={(e) => updateRelationship(selectedRelationship.id, { name: e.target.value })}
+            value={selectedRelationship.name || ""}
+            onChange={(e) =>
+              updateRelationship(selectedRelationship.id, {
+                name: e.target.value,
+              })
+            }
             disabled={readOnly}
             placeholder="Optional relationship name"
           />
@@ -468,15 +550,23 @@ export function SchemaEditorPanel({
           <div>
             <Label>Source</Label>
             <div className="text-sm bg-gray-50 p-2 rounded">
-              <div className="font-medium">{selectedRelationship.sourceTable}</div>
-              <div className="text-gray-600">{selectedRelationship.sourceColumn}</div>
+              <div className="font-medium">
+                {selectedRelationship.sourceTable}
+              </div>
+              <div className="text-gray-600">
+                {selectedRelationship.sourceColumn}
+              </div>
             </div>
           </div>
           <div>
             <Label>Target</Label>
             <div className="text-sm bg-gray-50 p-2 rounded">
-              <div className="font-medium">{selectedRelationship.targetTable}</div>
-              <div className="text-gray-600">{selectedRelationship.targetColumn}</div>
+              <div className="font-medium">
+                {selectedRelationship.targetTable}
+              </div>
+              <div className="text-gray-600">
+                {selectedRelationship.targetColumn}
+              </div>
             </div>
           </div>
         </div>
@@ -491,13 +581,31 @@ export function SchemaEditorPanel({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
-              <DropdownMenuItem onClick={() => updateRelationship(selectedRelationship.id, { type: 'one-to-one' })}>
+              <DropdownMenuItem
+                onClick={() =>
+                  updateRelationship(selectedRelationship.id, {
+                    type: "one-to-one",
+                  })
+                }
+              >
                 One-to-One
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => updateRelationship(selectedRelationship.id, { type: 'one-to-many' })}>
+              <DropdownMenuItem
+                onClick={() =>
+                  updateRelationship(selectedRelationship.id, {
+                    type: "one-to-many",
+                  })
+                }
+              >
                 One-to-Many
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => updateRelationship(selectedRelationship.id, { type: 'many-to-many' })}>
+              <DropdownMenuItem
+                onClick={() =>
+                  updateRelationship(selectedRelationship.id, {
+                    type: "many-to-many",
+                  })
+                }
+              >
                 Many-to-Many
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -510,15 +618,19 @@ export function SchemaEditorPanel({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" className="w-full justify-between">
-                  {selectedRelationship.onDelete || 'CASCADE'}
+                  {selectedRelationship.onDelete || "CASCADE"}
                   <ChevronDown className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
-                {REFERENTIAL_ACTIONS.map(action => (
-                  <DropdownMenuItem 
+                {REFERENTIAL_ACTIONS.map((action) => (
+                  <DropdownMenuItem
                     key={action}
-                    onClick={() => updateRelationship(selectedRelationship.id, { onDelete: action })}
+                    onClick={() =>
+                      updateRelationship(selectedRelationship.id, {
+                        onDelete: action,
+                      })
+                    }
                   >
                     {action}
                   </DropdownMenuItem>
@@ -531,15 +643,19 @@ export function SchemaEditorPanel({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" className="w-full justify-between">
-                  {selectedRelationship.onUpdate || 'CASCADE'}
+                  {selectedRelationship.onUpdate || "CASCADE"}
                   <ChevronDown className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
-                {REFERENTIAL_ACTIONS.map(action => (
-                  <DropdownMenuItem 
+                {REFERENTIAL_ACTIONS.map((action) => (
+                  <DropdownMenuItem
                     key={action}
-                    onClick={() => updateRelationship(selectedRelationship.id, { onUpdate: action })}
+                    onClick={() =>
+                      updateRelationship(selectedRelationship.id, {
+                        onUpdate: action,
+                      })
+                    }
                   >
                     {action}
                   </DropdownMenuItem>
@@ -573,33 +689,45 @@ export function SchemaEditorPanel({
             <AlertTriangle className="h-5 w-5 text-red-500" />
           )}
           <span className="font-medium">
-            {validationResult.isValid ? 'Schema is valid' : 'Schema has issues'}
+            {validationResult.isValid ? "Schema is valid" : "Schema has issues"}
           </span>
         </div>
 
         {validationResult.errors.length > 0 && (
           <div>
-            <h4 className="font-medium text-red-600 mb-2">Errors ({validationResult.errors.length})</h4>
+            <h4 className="font-medium text-red-600 mb-2">
+              Errors ({validationResult.errors.length})
+            </h4>
             <div className="space-y-2">
-              {validationResult.errors.map(error => (
+              {validationResult.errors.map((error) => (
                 <Card key={error.id} className="border-red-200 bg-red-50">
                   <CardContent className="p-3">
                     <div className="flex items-start gap-2">
                       <AlertTriangle className="h-4 w-4 text-red-500 flex-shrink-0 mt-0.5" />
                       <div>
-                        <p className="text-sm font-medium text-red-900">{error.message}</p>
+                        <p className="text-sm font-medium text-red-900">
+                          {error.message}
+                        </p>
                         {error.suggestion && (
-                          <p className="text-xs text-red-700 mt-1">{error.suggestion}</p>
+                          <p className="text-xs text-red-700 mt-1">
+                            {error.suggestion}
+                          </p>
                         )}
                         {(error.table || error.column) && (
                           <div className="flex gap-2 mt-1">
                             {error.table && (
-                              <Badge variant="outline" className="text-xs bg-red-100">
+                              <Badge
+                                variant="outline"
+                                className="text-xs bg-red-100"
+                              >
                                 {error.table}
                               </Badge>
                             )}
                             {error.column && (
-                              <Badge variant="outline" className="text-xs bg-red-100">
+                              <Badge
+                                variant="outline"
+                                className="text-xs bg-red-100"
+                              >
                                 {error.column}
                               </Badge>
                             )}
@@ -616,27 +744,42 @@ export function SchemaEditorPanel({
 
         {validationResult.warnings.length > 0 && (
           <div>
-            <h4 className="font-medium text-yellow-600 mb-2">Warnings ({validationResult.warnings.length})</h4>
+            <h4 className="font-medium text-yellow-600 mb-2">
+              Warnings ({validationResult.warnings.length})
+            </h4>
             <div className="space-y-2">
-              {validationResult.warnings.map(warning => (
-                <Card key={warning.id} className="border-yellow-200 bg-yellow-50">
+              {validationResult.warnings.map((warning) => (
+                <Card
+                  key={warning.id}
+                  className="border-yellow-200 bg-yellow-50"
+                >
                   <CardContent className="p-3">
                     <div className="flex items-start gap-2">
                       <Info className="h-4 w-4 text-yellow-500 flex-shrink-0 mt-0.5" />
                       <div>
-                        <p className="text-sm font-medium text-yellow-900">{warning.message}</p>
+                        <p className="text-sm font-medium text-yellow-900">
+                          {warning.message}
+                        </p>
                         {warning.suggestion && (
-                          <p className="text-xs text-yellow-700 mt-1">{warning.suggestion}</p>
+                          <p className="text-xs text-yellow-700 mt-1">
+                            {warning.suggestion}
+                          </p>
                         )}
                         {(warning.table || warning.column) && (
                           <div className="flex gap-2 mt-1">
                             {warning.table && (
-                              <Badge variant="outline" className="text-xs bg-yellow-100">
+                              <Badge
+                                variant="outline"
+                                className="text-xs bg-yellow-100"
+                              >
                                 {warning.table}
                               </Badge>
                             )}
                             {warning.column && (
-                              <Badge variant="outline" className="text-xs bg-yellow-100">
+                              <Badge
+                                variant="outline"
+                                className="text-xs bg-yellow-100"
+                              >
                                 {warning.column}
                               </Badge>
                             )}
@@ -658,36 +801,39 @@ export function SchemaEditorPanel({
     <div className="h-full flex flex-col">
       <CardHeader className="pb-3">
         <CardTitle className="text-lg">Schema Editor</CardTitle>
-        
+
         {/* Tab Navigation */}
         <div className="grid grid-cols-4 gap-1 p-1 bg-gray-100 rounded-lg">
-          {(['schema', 'table', 'relationship', 'validation'] as const).map(tab => (
-            <Button
-              key={tab}
-              variant={activeTab === tab ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setActiveTab(tab)}
-              className="capitalize text-xs"
-            >
-              {tab === 'schema' && <Database className="h-3 w-3 mr-1" />}
-              {tab === 'table' && <TableIcon className="h-3 w-3 mr-1" />}
-              {tab === 'relationship' && <Link className="h-3 w-3 mr-1" />}
-              {tab === 'validation' && (
-                validationResult?.isValid ? 
-                  <CheckCircle className="h-3 w-3 mr-1 text-green-500" /> : 
-                  <AlertTriangle className="h-3 w-3 mr-1 text-red-500" />
-              )}
-              {tab}
-            </Button>
-          ))}
+          {(["schema", "table", "relationship", "validation"] as const).map(
+            (tab) => (
+              <Button
+                key={tab}
+                variant={activeTab === tab ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setActiveTab(tab)}
+                className="capitalize text-xs"
+              >
+                {tab === "schema" && <Database className="h-3 w-3 mr-1" />}
+                {tab === "table" && <TableIcon className="h-3 w-3 mr-1" />}
+                {tab === "relationship" && <Link className="h-3 w-3 mr-1" />}
+                {tab === "validation" &&
+                  (validationResult?.isValid ? (
+                    <CheckCircle className="h-3 w-3 mr-1 text-green-500" />
+                  ) : (
+                    <AlertTriangle className="h-3 w-3 mr-1 text-red-500" />
+                  ))}
+                {tab}
+              </Button>
+            )
+          )}
         </div>
       </CardHeader>
 
       <CardContent className="flex-1 overflow-y-auto">
-        {activeTab === 'schema' && renderSchemaTab()}
-        {activeTab === 'table' && renderTableTab()}
-        {activeTab === 'relationship' && renderRelationshipTab()}
-        {activeTab === 'validation' && renderValidationTab()}
+        {activeTab === "schema" && renderSchemaTab()}
+        {activeTab === "table" && renderTableTab()}
+        {activeTab === "relationship" && renderRelationshipTab()}
+        {activeTab === "validation" && renderValidationTab()}
       </CardContent>
     </div>
   );

@@ -329,7 +329,7 @@ Required JSON Structure:
           "name": "id",
           "type": "UUID",
           "nullable": false,
-          "constraints": ["PRIMARY KEY", "DEFAULT gen_random_uuid()"],
+          "constraints": ["PRIMARY KEY", "DEFAULT uuid_generate_v4()"],
           "reasoning": "Primary key"
         },
         {
@@ -660,7 +660,7 @@ Format your response as JSON with the following structure:
             name: 'id',
             type: 'UUID' as const,
             nullable: false,
-            constraints: ['PRIMARY KEY', 'DEFAULT gen_random_uuid()'],
+            constraints: ['PRIMARY KEY', 'DEFAULT uuid_generate_v4()'],
             reasoning: 'UUID primary key following PostgreSQL best practices',
           },
           // Map CSV columns

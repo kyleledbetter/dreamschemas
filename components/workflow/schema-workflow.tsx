@@ -24,6 +24,7 @@ import {
   Upload,
   Zap,
   RefreshCw,
+  ArrowRightIcon,
 } from "lucide-react";
 import React, { useCallback, useState, useEffect } from "react";
 
@@ -938,22 +939,13 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
       <div className="flex-1 w-full max-w-4xl mx-auto p-6">
         {/* Schema Recovery Banner */}
         {hasStoredSchema && !schemaRecovered && (
-          <Alert className="mb-6 border-blue-200 bg-blue-50">
-            <Info className="h-4 w-4 text-blue-600" />
-            <AlertDescription className="text-blue-800">
+          <Alert className="mb-6 border-accent/20 bg-accent/10">
+            <Info className="size-5 mt-1 !mr-2 !text-accent" />
+            <AlertDescription className="text-accent">
               <div className="flex items-center justify-between">
                 <div>
                   <strong>Previous session detected!</strong> We found a saved
                   schema from your last session.
-                  <br />
-                  <span className="text-sm text-blue-600">
-                    {(() => {
-                      const metadata = SchemaStorage.getMetadata();
-                      return `${metadata.schemaName} with ${
-                        metadata.tableCount
-                      } tables (${metadata.ageHours?.toFixed(1)}h ago)`;
-                    })()}
-                  </span>
                 </div>
                 <div className="flex gap-2">
                   <Button
@@ -962,17 +954,16 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                       SchemaStorage.clear();
                       setShowWelcome(true);
                     }}
-                    variant="outline"
-                    className="text-blue-600 border-blue-200"
+                    className="text-accent border-accent/20 bg-accent/10"
                   >
                     Start Fresh
                   </Button>
                   <Button
                     size="sm"
                     onClick={() => window.location.reload()}
-                    className="bg-blue-600 hover:bg-blue-700"
+                    className="bg-accent/10 hover:bg-accent/20"
                   >
-                    <RefreshCw className="h-3 w-3 mr-1" />
+                    <RefreshCw className="size-3" />
                     Recover Schema
                   </Button>
                 </div>
@@ -1731,14 +1722,30 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
           {state.currentStep === "design" && state.generatedSchema && (
             <Card className="grow flex flex-col">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Eye className="h-5 w-5" />
-                  Visual Schema Design
-                </CardTitle>
-                <p className="text-muted-foreground">
-                  Fine-tune your schema with our visual editor. Drag tables,
-                  edit relationships, and customize properties.
-                </p>
+                <div className="flex items-center gap-2">
+                  <div className="grow">
+                    <CardTitle className="flex items-center gap-2">
+                      <Eye className="h-5 w-5" />
+                      Visual Schema Design
+                    </CardTitle>
+                    <p className="text-muted-foreground">
+                      Fine-tune your schema with our visual editor. Drag tables,
+                      edit relationships, and customize properties.
+                    </p>
+                  </div>
+                  <Button
+                    variant="default"
+                    onClick={() => {
+                      if (state.generatedSchema) {
+                        handleDesignComplete(state.generatedSchema);
+                      }
+                      nextStep();
+                    }}
+                  >
+                    Proceed
+                    <ArrowRightIcon className="size-4" />
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className="grow flex flex-col">
                 <VisualSchemaEditor
@@ -1751,38 +1758,45 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
           )}
 
           {state.currentStep === "export" && state.generatedSchema && (
-            <div className="grow flex flex-col gap-4">
-              <div className="flex items-center gap-2 justify-end">
-                <Button onClick={handleExportComplete} className="gap-2">
-                  <CheckCircle2 className="h-4 w-4" />
-                  Continue to Deployment
-                </Button>
-              </div>
+            <div className="relative">
+              <Button
+                onClick={() => {
+                  handleExportComplete();
+                  nextStep();
+                }}
+                className="gap-2 absolute right-6 top-6"
+              >
+                Proceed
+                <ArrowRightIcon className="size-4" />
+              </Button>
               <ExportManagerUI schema={state.generatedSchema} />
             </div>
           )}
 
           {state.currentStep === "deploy" && (
             <div className="space-y-6 grow flex flex-col">
-              {state.completedSteps.has("deploy") && state.projectData && (
-                <div className="flex items-center gap-2 justify-end">
-                  <Button onClick={() => goToStep("seed")} className="gap-2">
-                    <Upload className="h-4 w-4" />
-                    Continue to Data Seeding
-                  </Button>
-                </div>
-              )}
-
               <Card className="grow flex flex-col">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Cloud className="h-5 w-5" />
-                    Deploy to Supabase
-                  </CardTitle>
-                  <p className="text-muted-foreground">
-                    Choose a Supabase project and deploy your schema with one
-                    click.
-                  </p>
+                <CardHeader className="flex flex-row gap-2 items-center">
+                  <div className="grow">
+                    <CardTitle className="flex items-center gap-2">
+                      <Cloud className="h-5 w-5" />
+                      Deploy to Supabase
+                    </CardTitle>
+                    <p className="text-muted-foreground">
+                      Choose a Supabase project and deploy your schema with one
+                      click.
+                    </p>
+                  </div>
+                  <Button
+                    onClick={() => goToStep("seed")}
+                    className="gap-2"
+                    disabled={
+                      !state.completedSteps.has("deploy") || !state.projectData
+                    }
+                  >
+                    Proceed
+                    <ArrowRightIcon className="size-4" />
+                  </Button>
                 </CardHeader>
                 <CardContent className="grow flex flex-col">
                   <div className="space-y-6 grow flex flex-col">
@@ -1817,39 +1831,25 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
           {state.currentStep === "seed" &&
             state.generatedSchema &&
             state.projectData && (
-              <Card className="grow flex flex-col">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Upload className="h-5 w-5" />
-                    Seed Data
-                  </CardTitle>
-                  <p className="text-muted-foreground">
-                    Upload CSV files to populate your database tables with
-                    actual data.
-                  </p>
-                </CardHeader>
-                <CardContent className="grow flex flex-col">
-                  <DataSeedingInterface
-                    schema={state.generatedSchema}
-                    projectId={state.projectData.projectId}
-                    userEmail={user.email || null}
-                    onSeedingComplete={(result) => {
-                      if (result.success) {
-                        console.log(
-                          "Seeding completed successfully:",
-                          result.statistics
-                        );
-                        markStepComplete("seed");
-                      }
-                    }}
-                    onSeedingProgress={(progress) => {
-                      console.log("Seeding progress:", progress);
-                      // Could update UI with seeding progress
-                    }}
-                    className="grow"
-                  />
-                </CardContent>
-              </Card>
+              <DataSeedingInterface
+                schema={state.generatedSchema}
+                projectId={state.projectData.projectId}
+                userEmail={user.email || null}
+                onSeedingComplete={(result) => {
+                  if (result.success) {
+                    console.log(
+                      "Seeding completed successfully:",
+                      result.statistics
+                    );
+                    markStepComplete("seed");
+                  }
+                }}
+                onSeedingProgress={(progress) => {
+                  console.log("Seeding progress:", progress);
+                  // Could update UI with seeding progress
+                }}
+                className="grow"
+              />
             )}
         </div>
       </div>

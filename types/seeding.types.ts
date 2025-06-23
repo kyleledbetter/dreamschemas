@@ -128,6 +128,7 @@ export interface SeedingStatistics {
     validation: number;
     insertion: number;
   };
+  currentTable?: string;
 }
 
 export interface SeedingConfiguration {

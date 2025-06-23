@@ -246,7 +246,7 @@ export class MigrationFormatter {
     
     // Check if we need pgcrypto for any encrypted columns
     const needsCrypto = this.schema.tables.some(table =>
-      table.columns.some(col => col.type === 'UUID' && col.defaultValue?.includes('gen_random_uuid'))
+      table.columns.some(col => col.type === 'UUID' && col.defaultValue?.includes('uuid_generate_v4'))
     );
     
     if (needsCrypto) {
@@ -579,7 +579,7 @@ export class MigrationFormatter {
     }
     
     if (column.defaultValue) {
-      if (column.defaultValue === 'gen_random_uuid()') {
+      if (column.defaultValue === 'uuid_generate_v4()') {
         attributes.push('@default(uuid())');
       } else if (column.defaultValue === 'NOW()') {
         attributes.push('@default(now())');

@@ -580,7 +580,7 @@ export class SchemaGenerator {
       nullable: false,
       constraints: [
         { type: 'PRIMARY KEY' },
-        { type: 'DEFAULT', value: 'gen_random_uuid()' }
+        { type: 'DEFAULT', value: 'uuid_generate_v4()' }
       ],
       comment: 'Primary key (UUID)',
     };

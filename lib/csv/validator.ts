@@ -71,7 +71,7 @@ export class CSVValidator {
   constructor(options: CSVValidationOptions = {}) {
     this.options = {
       maxFileSize: 50 * 1024 * 1024, // 50MB
-      maxRows: 100000,
+      maxRows: 1000000,
       maxColumns: 300,
       requireHeaders: true,
       allowEmptyRows: false,
