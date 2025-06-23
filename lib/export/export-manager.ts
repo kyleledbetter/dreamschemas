@@ -1056,7 +1056,7 @@ spec:
     if (column.defaultValue && !attributes.some(a => a.includes('@default'))) {
       if (column.defaultValue === 'NOW()') {
         attributes.push('@default(now())');
-      } else if (column.defaultValue === 'gen_random_uuid()') {
+      } else if (column.defaultValue === 'uuid_generate_v4()') {
         attributes.push('@default(uuid())');
       }
     }

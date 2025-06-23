@@ -128,6 +128,7 @@ export interface SeedingStatistics {
     validation: number;
     insertion: number;
   };
+  currentTable?: string;
 }
 
 export interface SeedingConfiguration {
@@ -187,6 +188,12 @@ export interface SeedingProgress {
   errors: DataError[];
   warnings: DataWarning[];
   lastUpdate: Date;
+  needsContinuation?: boolean;
+  continuationData?: {
+    processedRows: number;
+    totalRows: number;
+    nextChunkIndex: number;
+  };
 }
 
 // Storage types

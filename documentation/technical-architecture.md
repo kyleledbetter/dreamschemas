@@ -114,7 +114,7 @@ Sample Data (first 10 rows):
 ${data.sampleRows.map(row => row.join(', ')).join('\n')}
 
 Requirements:
-1. Use UUID primary keys (id UUID DEFAULT gen_random_uuid() PRIMARY KEY)
+1. Use UUID primary keys (id UUID DEFAULT uuid_generate_v4() PRIMARY KEY)
 2. Add created_at and updated_at timestamps
 3. Include user_id references to auth.users where appropriate
 4. Detect and suggest relationships between data
@@ -337,7 +337,7 @@ interface TypeInference {
 ```typescript
 interface TableSchema {
   // Always include these fields
-  id: 'UUID DEFAULT gen_random_uuid() PRIMARY KEY'
+  id: 'UUID DEFAULT uuid_generate_v4() PRIMARY KEY'
   created_at: 'TIMESTAMPTZ DEFAULT NOW()'
   updated_at: 'TIMESTAMPTZ DEFAULT NOW()'
   
@@ -436,7 +436,7 @@ interface TableNode {
 ```sql
 -- Up Migration
 CREATE TABLE IF NOT EXISTS public.users (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   -- ... columns
 );
 
@@ -448,7 +448,7 @@ DROP TABLE IF EXISTS public.users;
 ```sql
 -- schema.sql
 create table public.users (
-  id uuid primary key default gen_random_uuid(),
+  id uuid primary key default uuid_generate_v4(),
   -- ... columns
 );
 ```

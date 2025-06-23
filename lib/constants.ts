@@ -39,7 +39,7 @@ export const DEFAULT_COLUMNS = {
     name: 'id',
     type: 'UUID',
     nullable: false,
-    defaultValue: 'gen_random_uuid()',
+    defaultValue: 'uuid_generate_v4()',
     constraints: ['PRIMARY KEY']
   },
   created_at: {

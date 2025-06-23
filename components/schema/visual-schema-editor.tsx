@@ -447,7 +447,7 @@ function PropertiesPanel({
                     : undefined
                 )
               }
-              placeholder="e.g., NOW(), gen_random_uuid()"
+              placeholder="e.g., NOW(), uuid_generate_v4()"
             />
           </div>
 
@@ -669,7 +669,7 @@ function VisualSchemaEditorComponent({
           name: "id",
           type: "UUID",
           nullable: false,
-          defaultValue: "gen_random_uuid()",
+          defaultValue: "uuid_generate_v4()",
           constraints: [{ type: "PRIMARY KEY" }],
           comment: "Primary key",
         },

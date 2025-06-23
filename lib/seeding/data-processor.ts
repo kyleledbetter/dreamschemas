@@ -336,7 +336,7 @@ export class DataProcessor {
             errorType: "type_conversion",
             message: `Invalid UUID format: ${stringValue}`,
             originalValue: value,
-            suggestedFix: "Provide a valid UUID or use gen_random_uuid()",
+            suggestedFix: "Provide a valid UUID or use uuid_generate_v4()",
             severity: "high",
             canAutoFix: true,
           });
@@ -621,8 +621,8 @@ export class DataProcessor {
       status: this.job.status,
       overallProgress: Math.min(100, Math.max(0, percent)),
       currentPhase: phase,
-      currentTable: this.statistics.currentTable,
-      currentBatch: this.job.currentBatch,
+      currentTable: this.statistics.currentTable || "",
+      currentBatch: this.job.currentBatch || 0,
       rowsPerSecond: this.statistics.averageRowsPerSecond,
       estimatedTimeRemaining: this.calculateETA(),
       statistics: this.statistics,
@@ -642,5 +642,3 @@ export class DataProcessor {
     return Math.ceil(remainingRows / this.statistics.averageRowsPerSecond);
   }
 }
-
-export { DataProcessor };

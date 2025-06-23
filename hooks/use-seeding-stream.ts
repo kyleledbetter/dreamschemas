@@ -96,21 +96,24 @@ export function useSeedingStream(options: SeedingStreamOptions = {}) {
         throw new Error(`Failed to create Edge Function: ${errorData.error}`);
       }
 
-      // Prepare request payload for the seeding job
-      const jobData = {
-        fileId: job.fileUpload?.id || "",
-        jobId,
-        configuration: job.configuration,
-        schema: job.schema,
-        fileUpload: job.fileUpload ? {
-          storagePath: job.fileUpload.storagePath,
-          filename: job.fileUpload.filename,
-          size: job.fileUpload.size,
-        } : undefined,
-      };
-
       // Start the seeding job via our API route (streaming)
       const streamUrl = `/api/seeding/start?stream=true`;
+      
+      // Prepare request payload for the seeding job
+      const createJobData = (baseJob: SeedingJob, overrides: any = {}) => ({
+        fileId: baseJob.fileUpload?.id || "",
+        jobId,
+        configuration: baseJob.configuration,
+        schema: baseJob.schema,
+        fileUpload: baseJob.fileUpload ? {
+          storagePath: baseJob.fileUpload.storagePath,
+          filename: baseJob.fileUpload.filename,
+          size: baseJob.fileUpload.size,
+        } : undefined,
+        ...overrides,
+      });
+
+      const jobData = createJobData(job);
       
       // First, send the POST request to initiate seeding
       const response = await fetch(streamUrl, {
@@ -144,13 +147,13 @@ export function useSeedingStream(options: SeedingStreamOptions = {}) {
       }));
 
       // Process the streaming response
-      const decoder = new TextDecoder();
-      let buffer = ''; // Buffer for incomplete messages
-      
-      const processStream = async () => {
+      const processStreamWithReader = async (streamReader: ReadableStreamDefaultReader<Uint8Array>) => {
+        const decoder = new TextDecoder();
+        let buffer = ''; // Buffer for incomplete messages
+        
         try {
           while (true) {
-            const { done, value } = await reader.read();
+            const { done, value } = await streamReader.read();
             
             if (done) {
               cleanup();
@@ -184,6 +187,70 @@ export function useSeedingStream(options: SeedingStreamOptions = {}) {
                         progress,
                       }));
                       onProgress?.(progress);
+                      
+                      // Handle continuation if needed
+                      if (progress.needsContinuation && progress.continuationData) {
+                        console.log(`🔄 Seeding needs continuation from row ${progress.continuationData.processedRows}`);
+                        
+                        // Close current stream first
+                        cleanup();
+                        
+                        // Schedule continuation after current stream is closed
+                        setTimeout(async () => {
+                          try {
+                            console.log(`🔄 Starting continuation request for rows ${progress.continuationData!.processedRows}+`);
+                            
+                            // Get the current job data and update it for continuation
+                            const continuationJobData = createJobData(job, {
+                              processedRows: progress.continuationData!.processedRows,
+                              chunkIndex: progress.continuationData!.nextChunkIndex,
+                            });
+                            
+                            // Start new continuation request 
+                            const continuationResponse = await fetch(streamUrl, {
+                              method: "POST",
+                              headers: {
+                                "Content-Type": "application/json",
+                                "Authorization": `Bearer ${oauthState.accessToken}`,
+                              },
+                              body: JSON.stringify({
+                                projectId,
+                                jobData: continuationJobData,
+                              }),
+                            });
+                            
+                            if (!continuationResponse.ok) {
+                              const errorData = await continuationResponse.json();
+                              throw new Error(`Continuation failed: ${errorData.error || continuationResponse.statusText}`);
+                            }
+                            
+                            // Create a new reader for the continuation stream
+                            const continuationReader = continuationResponse.body?.getReader();
+                            if (!continuationReader) {
+                              throw new Error("Failed to get continuation stream");
+                            }
+                            
+                            readerRef.current = continuationReader;
+                            setState(prev => ({ ...prev, isConnected: true }));
+                            
+                            console.log(`✅ Continuation stream started successfully`);
+                            
+                            // Restart the stream processing with the new reader
+                            processStreamWithReader(continuationReader);
+                            
+                          } catch (continuationError) {
+                            console.error('❌ Failed to continue seeding:', continuationError);
+                            const error = new Error(`Continuation failed: ${continuationError instanceof Error ? continuationError.message : 'Unknown error'}`);
+                            setState(prev => ({
+                              ...prev,
+                              error,
+                              isProcessing: false,
+                              isConnected: false,
+                            }));
+                            onError?.(error);
+                          }
+                        }, 1000); // Longer delay to ensure current stream is properly closed
+                      }
                       break;
 
                     case "complete":
@@ -235,7 +302,7 @@ export function useSeedingStream(options: SeedingStreamOptions = {}) {
       };
 
       // Start processing the stream
-      processStream();
+      processStreamWithReader(reader);
 
     } catch (error) {
       const err = error instanceof Error ? error : new Error("Failed to start seeding");

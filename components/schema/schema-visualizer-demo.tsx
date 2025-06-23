@@ -1,11 +1,11 @@
-"use client"
+"use client";
 
-import React, { useState } from 'react';
-import { SchemaVisualizer } from './schema-visualizer';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { DatabaseSchema, Table, Relationship } from '@/types/schema.types';
+import React, { useState } from "react";
+import { SchemaVisualizer } from "./schema-visualizer";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { DatabaseSchema, Table, Relationship } from "@/types/schema.types";
 
 /**
  * Demo component showcasing the Schema Visualizer with sample data
@@ -16,200 +16,200 @@ export function SchemaVisualizerDemo() {
   const [schema, setSchema] = useState<DatabaseSchema>(() => {
     const sampleTables: Table[] = [
       {
-        id: 'users-table',
-        name: 'users',
+        id: "users-table",
+        name: "users",
         columns: [
           {
-            id: 'users-id',
-            name: 'id',
-            type: 'UUID',
+            id: "users-id",
+            name: "id",
+            type: "UUID",
             nullable: false,
-            defaultValue: 'gen_random_uuid()',
-            constraints: [{ type: 'PRIMARY KEY' }]
+            defaultValue: "uuid_generate_v4()",
+            constraints: [{ type: "PRIMARY KEY" }],
           },
           {
-            id: 'users-email',
-            name: 'email',
-            type: 'VARCHAR',
+            id: "users-email",
+            name: "email",
+            type: "VARCHAR",
             length: 255,
             nullable: false,
-            constraints: [{ type: 'UNIQUE' }]
+            constraints: [{ type: "UNIQUE" }],
           },
           {
-            id: 'users-name',
-            name: 'full_name',
-            type: 'VARCHAR',
+            id: "users-name",
+            name: "full_name",
+            type: "VARCHAR",
             length: 100,
             nullable: false,
-            constraints: []
+            constraints: [],
           },
           {
-            id: 'users-created',
-            name: 'created_at',
-            type: 'TIMESTAMPTZ',
+            id: "users-created",
+            name: "created_at",
+            type: "TIMESTAMPTZ",
             nullable: false,
-            defaultValue: 'NOW()',
-            constraints: []
-          }
+            defaultValue: "NOW()",
+            constraints: [],
+          },
         ],
         indexes: [],
-        position: { x: 100, y: 100 }
+        position: { x: 100, y: 100 },
       },
       {
-        id: 'posts-table',
-        name: 'posts',
+        id: "posts-table",
+        name: "posts",
         columns: [
           {
-            id: 'posts-id',
-            name: 'id',
-            type: 'UUID',
+            id: "posts-id",
+            name: "id",
+            type: "UUID",
             nullable: false,
-            defaultValue: 'gen_random_uuid()',
-            constraints: [{ type: 'PRIMARY KEY' }]
+            defaultValue: "uuid_generate_v4()",
+            constraints: [{ type: "PRIMARY KEY" }],
           },
           {
-            id: 'posts-title',
-            name: 'title',
-            type: 'VARCHAR',
+            id: "posts-title",
+            name: "title",
+            type: "VARCHAR",
             length: 200,
             nullable: false,
-            constraints: []
+            constraints: [],
           },
           {
-            id: 'posts-content',
-            name: 'content',
-            type: 'TEXT',
+            id: "posts-content",
+            name: "content",
+            type: "TEXT",
             nullable: true,
-            constraints: []
+            constraints: [],
           },
           {
-            id: 'posts-author-id',
-            name: 'author_id',
-            type: 'UUID',
+            id: "posts-author-id",
+            name: "author_id",
+            type: "UUID",
             nullable: false,
             constraints: [
               {
-                type: 'FOREIGN KEY',
-                referencedTable: 'users',
-                referencedColumn: 'id',
-                onDelete: 'CASCADE'
-              }
-            ]
+                type: "FOREIGN KEY",
+                referencedTable: "users",
+                referencedColumn: "id",
+                onDelete: "CASCADE",
+              },
+            ],
           },
           {
-            id: 'posts-published',
-            name: 'published_at',
-            type: 'TIMESTAMPTZ',
+            id: "posts-published",
+            name: "published_at",
+            type: "TIMESTAMPTZ",
             nullable: true,
-            constraints: []
-          }
+            constraints: [],
+          },
         ],
         indexes: [],
-        position: { x: 500, y: 100 }
+        position: { x: 500, y: 100 },
       },
       {
-        id: 'comments-table',
-        name: 'comments',
+        id: "comments-table",
+        name: "comments",
         columns: [
           {
-            id: 'comments-id',
-            name: 'id',
-            type: 'UUID',
+            id: "comments-id",
+            name: "id",
+            type: "UUID",
             nullable: false,
-            defaultValue: 'gen_random_uuid()',
-            constraints: [{ type: 'PRIMARY KEY' }]
+            defaultValue: "uuid_generate_v4()",
+            constraints: [{ type: "PRIMARY KEY" }],
           },
           {
-            id: 'comments-content',
-            name: 'content',
-            type: 'TEXT',
+            id: "comments-content",
+            name: "content",
+            type: "TEXT",
             nullable: false,
-            constraints: []
+            constraints: [],
           },
           {
-            id: 'comments-post-id',
-            name: 'post_id',
-            type: 'UUID',
+            id: "comments-post-id",
+            name: "post_id",
+            type: "UUID",
             nullable: false,
             constraints: [
               {
-                type: 'FOREIGN KEY',
-                referencedTable: 'posts',
-                referencedColumn: 'id',
-                onDelete: 'CASCADE'
-              }
-            ]
+                type: "FOREIGN KEY",
+                referencedTable: "posts",
+                referencedColumn: "id",
+                onDelete: "CASCADE",
+              },
+            ],
           },
           {
-            id: 'comments-author-id',
-            name: 'author_id',
-            type: 'UUID',
+            id: "comments-author-id",
+            name: "author_id",
+            type: "UUID",
             nullable: false,
             constraints: [
               {
-                type: 'FOREIGN KEY',
-                referencedTable: 'users',
-                referencedColumn: 'id',
-                onDelete: 'CASCADE'
-              }
-            ]
+                type: "FOREIGN KEY",
+                referencedTable: "users",
+                referencedColumn: "id",
+                onDelete: "CASCADE",
+              },
+            ],
           },
           {
-            id: 'comments-created',
-            name: 'created_at',
-            type: 'TIMESTAMPTZ',
+            id: "comments-created",
+            name: "created_at",
+            type: "TIMESTAMPTZ",
             nullable: false,
-            defaultValue: 'NOW()',
-            constraints: []
-          }
+            defaultValue: "NOW()",
+            constraints: [],
+          },
         ],
         indexes: [],
-        position: { x: 300, y: 400 }
-      }
+        position: { x: 300, y: 400 },
+      },
     ];
 
     const sampleRelationships: Relationship[] = [
       {
-        id: 'users-posts',
-        sourceTable: 'users',
-        sourceColumn: 'id',
-        targetTable: 'posts',
-        targetColumn: 'author_id',
-        type: 'one-to-many',
-        onDelete: 'CASCADE',
-        onUpdate: 'CASCADE'
+        id: "users-posts",
+        sourceTable: "users",
+        sourceColumn: "id",
+        targetTable: "posts",
+        targetColumn: "author_id",
+        type: "one-to-many",
+        onDelete: "CASCADE",
+        onUpdate: "CASCADE",
       },
       {
-        id: 'posts-comments',
-        sourceTable: 'posts',
-        sourceColumn: 'id',
-        targetTable: 'comments',
-        targetColumn: 'post_id',
-        type: 'one-to-many',
-        onDelete: 'CASCADE',
-        onUpdate: 'CASCADE'
+        id: "posts-comments",
+        sourceTable: "posts",
+        sourceColumn: "id",
+        targetTable: "comments",
+        targetColumn: "post_id",
+        type: "one-to-many",
+        onDelete: "CASCADE",
+        onUpdate: "CASCADE",
       },
       {
-        id: 'users-comments',
-        sourceTable: 'users',
-        sourceColumn: 'id',
-        targetTable: 'comments',
-        targetColumn: 'author_id',
-        type: 'one-to-many',
-        onDelete: 'CASCADE',
-        onUpdate: 'CASCADE'
-      }
+        id: "users-comments",
+        sourceTable: "users",
+        sourceColumn: "id",
+        targetTable: "comments",
+        targetColumn: "author_id",
+        type: "one-to-many",
+        onDelete: "CASCADE",
+        onUpdate: "CASCADE",
+      },
     ];
 
     return {
-      id: 'demo-schema',
-      name: 'Blog Platform Schema',
+      id: "demo-schema",
+      name: "Blog Platform Schema",
       tables: sampleTables,
       relationships: sampleRelationships,
       rlsPolicies: [],
-      version: '1.0.0',
+      version: "1.0.0",
       createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
     };
   });
 
@@ -217,13 +217,13 @@ export function SchemaVisualizerDemo() {
 
   const handleSchemaChange = (updatedSchema: DatabaseSchema) => {
     setSchema(updatedSchema);
-    console.log('Schema updated:', updatedSchema);
+    console.log("Schema updated:", updatedSchema);
   };
 
   const resetSchema = () => {
-    setSchema(prevSchema => ({
+    setSchema((prevSchema) => ({
       ...prevSchema,
-      updatedAt: new Date()
+      updatedAt: new Date(),
     }));
   };
 
@@ -235,9 +235,7 @@ export function SchemaVisualizerDemo() {
           <div className="flex items-center justify-between">
             <CardTitle className="text-lg">Schema Visualizer Demo</CardTitle>
             <div className="flex items-center gap-2">
-              <Badge variant="outline">
-                Tables: {schema.tables.length}
-              </Badge>
+              <Badge variant="outline">Tables: {schema.tables.length}</Badge>
               <Badge variant="outline">
                 Relationships: {schema.relationships.length}
               </Badge>
@@ -253,17 +251,13 @@ export function SchemaVisualizerDemo() {
             >
               {readOnly ? "Enable Editing" : "Read Only Mode"}
             </Button>
-            <Button
-              variant="outline"
-              onClick={resetSchema}
-              size="sm"
-            >
+            <Button variant="outline" onClick={resetSchema} size="sm">
               Refresh
             </Button>
           </div>
           <p className="text-sm text-gray-600 mt-2">
-            This demo showcases the React Flow-based schema visualizer. 
-            Try dragging tables, selecting elements, and using the sidebar editor.
+            This demo showcases the React Flow-based schema visualizer. Try
+            dragging tables, selecting elements, and using the sidebar editor.
             {readOnly && " (Currently in read-only mode)"}
           </p>
         </CardContent>

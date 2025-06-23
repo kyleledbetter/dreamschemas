@@ -390,7 +390,7 @@ supabase_storage/
 ```sql
 -- Seeding job tracking
 CREATE TABLE seeding_jobs (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL,
   project_id TEXT NOT NULL,
   file_id TEXT NOT NULL,
@@ -408,7 +408,7 @@ CREATE TABLE seeding_jobs (
 
 -- File upload tracking
 CREATE TABLE file_uploads (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL,
   filename TEXT NOT NULL,
   size BIGINT NOT NULL,
