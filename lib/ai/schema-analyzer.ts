@@ -115,6 +115,13 @@ interface ColumnStatistics {
 
 /**
  * Core AI Schema Analyzer using Google Gemini 2.0 Flash
+ * 
+ * RECENT CHANGES (Nullability Leniency):
+ * - Updated system prompt to emphasize nullable columns by default
+ * - Relaxed NOT NULL constraints to avoid data seeding issues
+ * - Changed thresholds from 5% to 1% null tolerance
+ * - Added guidance to only use NOT NULL for critical fields
+ * - Made fallback analysis more permissive with nullability
  */
 export class SchemaAnalyzer {
   private model;
@@ -308,6 +315,7 @@ CORE PRINCIPLES:
 2. IDENTIFY ENTITIES: Look for distinct business entities that should be separate tables
 3. CREATE RELATIONSHIPS: Use foreign keys to link related data between tables
 4. AVOID REDUNDANCY: Move repeated data into lookup/reference tables
+5. BE LENIENT WITH NULLABILITY: Design for easy data import and real-world data imperfections
 
 WHEN TO SPLIT TABLES:
 - Columns that represent different entities (e.g., user info + order info + product info)
@@ -315,12 +323,21 @@ WHEN TO SPLIT TABLES:
 - Large tables with >15-20 columns should usually be split
 - One-to-many relationships (e.g., user has many orders)
 
+NULLABILITY GUIDANCE:
+- DEFAULT TO NULLABLE: Most columns should allow NULL values for easier data import
+- ONLY use NOT NULL for:
+  * Primary keys (id columns)
+  * Audit columns (created_at, updated_at)
+  * Absolutely essential business fields that are guaranteed to have values
+- AVOID NOT NULL for user-provided data, optional fields, or any field that might be missing during import
+- REMEMBER: It's easier to add NOT NULL later than to deal with import failures
+
 OUTPUT FORMAT: Return ONLY valid JSON (no markdown, no backticks, no explanations).
 
 Required JSON Structure:
 {
   "confidence": number (0-1),
-  "reasoning": "Explain your normalization decisions",
+  "reasoning": "Explain your normalization decisions and nullability choices",
   "tables": [
     {
       "name": "table_name",
@@ -335,10 +352,10 @@ Required JSON Structure:
         {
           "name": "column_name",
           "type": "VARCHAR|TEXT|INTEGER|etc",
-          "nullable": boolean,
+          "nullable": true,  // DEFAULT TO TRUE for most columns
           "length": number (optional),
           "constraints": ["FOREIGN KEY", "UNIQUE", etc],
-          "reasoning": "Why this column exists"
+          "reasoning": "Why this column exists and why it's nullable/not nullable"
         },
         {
           "name": "created_at",
@@ -399,6 +416,7 @@ CRITICAL REQUIREMENTS:
 - Foreign keys MUST be UUID type and reference existing tables
 - Use snake_case for all names
 - Include at least one RLS policy per table (can be permissive for now)
+- DEFAULT TO NULLABLE for most columns to avoid data import issues
 - Provide clear reasoning for design decisions
 - Output valid JSON only (no markdown formatting)`;
   }
@@ -673,7 +691,7 @@ Format your response as JSON with the following structure:
             return {
               name: colName,
               type: isForeignKey ? 'UUID' as const : (col.inferredType || 'TEXT') as PostgresType,
-              nullable: col.nullCount > 0,
+              nullable: col.nullCount > 0 || col.nullCount / col.totalCount > 0.01, // Be more lenient
               constraints: isAuthUserRef 
                 ? ['REFERENCES auth.users(id)']
                 : isForeignKey && !isAuthUserRef 
@@ -685,7 +703,7 @@ Format your response as JSON with the following structure:
                   : isForeignKey 
                     ? 'Foreign key relationship detected.' 
                     : ''
-              } Null rate: ${(col.nullCount / col.totalCount * 100).toFixed(1)}%`,
+              } Null rate: ${(col.nullCount / col.totalCount * 100).toFixed(1)}% - Made nullable for easier data import`,
             };
           }),
           // Add timestamps

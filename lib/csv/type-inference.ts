@@ -253,7 +253,7 @@ export function inferColumnType(column: CSVColumn): TypeInferenceResult {
   
   // Check for NOT NULL constraint
   const nullRatio = column.nullCount / column.totalCount;
-  if (nullRatio < 0.05) { // Less than 5% nulls
+  if (nullRatio < 0.01 && column.nullCount <= 2) { // Less than 1% nulls AND max 2 null values
     constraints.push('NOT NULL');
   }
   

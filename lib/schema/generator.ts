@@ -270,12 +270,14 @@ export class SchemaGenerator {
       }
     }
 
-    // Add NOT NULL if low null percentage
-    if (!csvColumn.nullable && csvColumn.nullCount / csvColumn.totalCount < 0.1) {
+    // Be very conservative with NOT NULL - only add if extremely few nulls
+    // This helps avoid data seeding issues
+    const nullRatio = csvColumn.nullCount / csvColumn.totalCount;
+    if (!csvColumn.nullable && nullRatio < 0.01 && csvColumn.nullCount <= 2) {
       constraints.push({ type: 'NOT NULL' });
     }
 
-    // Add UNIQUE if high uniqueness
+    // Add UNIQUE if high uniqueness (keep this as is)
     if (csvColumn.uniqueValues) {
       const uniqueness = csvColumn.uniqueValues.size / csvColumn.totalCount;
       if (uniqueness > 0.95) {
@@ -631,8 +633,10 @@ export class SchemaGenerator {
       return aiColumn.nullable;
     }
     
-    // Allow nulls if more than 5% of values are null
-    return csvColumn.nullCount / csvColumn.totalCount > 0.05;
+    // Be very conservative with NOT NULL constraints to avoid seeding issues
+    // Only make columns NOT NULL if they have zero or extremely few nulls (< 1%)
+    const nullRatio = csvColumn.nullCount / csvColumn.totalCount;
+    return nullRatio > 0.01 || csvColumn.nullCount > 2; // Allow nulls more liberally
   }
 
   private needsLength(type: PostgresType): boolean {
