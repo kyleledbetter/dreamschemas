@@ -399,60 +399,29 @@ const filterDataForLookupTable = (data, tableInfo) => {
   console.log(\`\ud83c\udfaf \${tableInfo.name}: Target columns: \${tableInfo.nonSystemColumns.join(', ')}\`);
   
   // For lookup tables, we need to extract unique values for the lookup column
-  // The lookup column is typically the main data column (usually 'name')
   const targetColumn = tableInfo.nonSystemColumns[0] || 'name';
   
-  // Find ALL CSV columns that could contain lookup values for this table
-  // We'll analyze the table name to guess what kind of data it should contain
+  // SEMANTIC COLUMN MATCHING: Find CSV columns that semantically match this table
   const tableName = tableInfo.name.toLowerCase();
-  const potentialSourceColumns = [];
+  const matchingColumns = findSemanticColumnMatches(tableName, csvHeaders);
   
-  // Smart column detection based on table name and content
-  csvHeaders.forEach(header => {
-    const headerLower = header.toLowerCase();
-    
-    // Direct name matching
-    if (headerLower.includes(tableName.replace(/s$/, '')) || // Remove plural
-        headerLower.includes('name') ||
-        headerLower.includes('title')) {
-      potentialSourceColumns.push({ header, priority: 3 });
-      return;
-    }
-    
-    // Table-specific matching
-    if (tableName.includes('jurisdiction') && (headerLower.includes('state') || headerLower.includes('county') || headerLower.includes('city'))) {
-      potentialSourceColumns.push({ header, priority: 2 });
-      return;
-    }
-    
-    if (tableName.includes('business') && (headerLower.includes('business') || headerLower.includes('company'))) {
-      potentialSourceColumns.push({ header, priority: 2 });
-      return;
-    }
-    
-    if (tableName.includes('type') && (headerLower.includes('type') || headerLower.includes('category'))) {
-      potentialSourceColumns.push({ header, priority: 2 });
-      return;
-    }
-    
-    // Generic patterns
-    if (headerLower.includes('name') || headerLower.includes('type') || headerLower.includes('status') || 
-        headerLower.includes('category') || headerLower.includes('class')) {
-      potentialSourceColumns.push({ header, priority: 1 });
-    }
-  });
+  console.log(\`\ud83e\udd16 \${tableInfo.name}: Semantic matching results:\`);
+  if (matchingColumns.length > 0) {
+    matchingColumns.slice(0, 3).forEach((match, idx) => {
+      console.log(\`   \${idx + 1}. '\${match.header}' (score: \${match.score.toFixed(2)})\`);
+    });
+  } else {
+    console.log(\`   No matches found above threshold (0.3)\`);
+  }
   
-  // Sort by priority and take the best match
-  potentialSourceColumns.sort((a, b) => b.priority - a.priority);
-  
-  if (potentialSourceColumns.length === 0) {
-    console.warn(\`\u26a0\ufe0f  \${tableInfo.name}: No suitable source columns found for lookup table\`);
-    console.log(\`\ud83d\udccb Available headers: \${csvHeaders.join(', ')}\`);
+  if (matchingColumns.length === 0) {
+    console.warn(\`\u26a0\ufe0f  \${tableInfo.name}: No semantically matching columns found\`);
+    console.log(\`\ud83d\udccb Available CSV headers: \${csvHeaders.join(', ')}\`);
     return [];
   }
   
-  const bestSourceColumn = potentialSourceColumns[0].header;
-  console.log(\`\ud83d\udd0d \${tableInfo.name}: Using '\${bestSourceColumn}' as source for '\${targetColumn}'\`);
+  const bestSourceColumn = matchingColumns[0].header;
+  console.log(\`\ud83c\udfaf \${tableInfo.name}: Selected '\${bestSourceColumn}' (score: \${matchingColumns[0].score.toFixed(2)}) as source for '\${targetColumn}'\`);
   
   // Extract ALL unique non-empty values from the source column
   console.log(\`\ud83d\udd0d \${tableInfo.name}: Extracting values from column '\${bestSourceColumn}'\`);
@@ -476,8 +445,105 @@ const filterDataForLookupTable = (data, tableInfo) => {
   // Create lookup table records
   const lookupRecords = uniqueValues.map(value => ({ [targetColumn]: value }));
   
-  console.log(\`\u2705 \${tableInfo.name}: Generated \${lookupRecords.length} lookup records\`);
+  console.log(\`\u2705 \${tableInfo.name}: Generated \${lookupRecords.length} lookup records from '\${bestSourceColumn}'\`);
   return lookupRecords;
+};
+
+// NEW: Semantic column matching function
+const findSemanticColumnMatches = (tableName, csvHeaders) => {
+  const matches = [];
+  
+  csvHeaders.forEach(header => {
+    const score = calculateSemanticSimilarity(tableName, header);
+    if (score > 0) {
+      matches.push({ header, score });
+    }
+  });
+  
+  // Sort by score descending and return matches above threshold
+  return matches
+    .sort((a, b) => b.score - a.score)
+    .filter(match => match.score >= 0.3); // Minimum similarity threshold
+};
+
+// NEW: Calculate semantic similarity between table name and CSV column
+const calculateSemanticSimilarity = (tableName, csvHeader) => {
+  const table = tableName.toLowerCase();
+  const header = csvHeader.toLowerCase();
+  
+  let score = 0;
+  
+  // EXACT MATCHES - Highest priority
+  if (header === table || header === table.replace(/s$/, '')) {
+    score += 10; // Exact match
+  }
+  
+  // DIRECT SEMANTIC MATCHES - High priority
+  const semanticMappings = {
+    'builders': ['builder', 'contractors', 'developer', 'construction'],
+    'business_names': ['business', 'company', 'firm', 'corp', 'organization'],
+    'jurisdictions': ['jurisdiction', 'state', 'county', 'city', 'municipality', 'district'],
+    'sales': ['sale', 'sold', 'transaction', 'purchase'],
+    'permit_types': ['permit', 'license', 'approval', 'authorization'],
+    'project_types': ['project', 'development', 'construction', 'building'],
+    'statuses': ['status', 'state', 'condition', 'phase'],
+    'categories': ['category', 'type', 'class', 'classification'],
+    'zones': ['zone', 'zoning', 'district', 'area'],
+    'departments': ['department', 'agency', 'office', 'bureau']
+  };
+  
+  // Check if this table has specific semantic mappings
+  const tableKey = table.replace(/s$/, ''); // Remove plural
+  if (semanticMappings[table] || semanticMappings[tableKey]) {
+    const keywords = semanticMappings[table] || semanticMappings[tableKey];
+    keywords.forEach(keyword => {
+      if (header.includes(keyword)) {
+        score += 5; // Strong semantic match
+      }
+    });
+  }
+  
+  // SUBSTRING MATCHES - Medium priority  
+  if (header.includes(table.replace(/s$/, ''))) {
+    score += 3; // Table name appears in header
+  }
+  
+  if (table.replace(/s$/, '').includes(header.replace(/s$/, ''))) {
+    score += 2; // Header appears in table name
+  }
+  
+  // PARTIAL WORD MATCHES - Lower priority
+  const tableWords = table.split('_');
+  const headerWords = header.split(/[_\\s]+/);
+  
+  tableWords.forEach(tableWord => {
+    headerWords.forEach(headerWord => {
+      if (tableWord === headerWord) {
+        score += 1.5; // Exact word match
+      } else if (tableWord.length > 3 && headerWord.length > 3) {
+        const similarity = calculateStringSimilarity(tableWord, headerWord);
+        if (similarity > 0.7) {
+          score += similarity; // Fuzzy word match
+        }
+      }
+    });
+  });
+  
+  // PATTERN BONUSES
+  if (table.includes('type') && header.includes('type')) {
+    score += 2;
+  }
+  
+  if (table.includes('name') && header.includes('name')) {
+    score += 2;
+  }
+  
+  // PENALTY for generic terms when we need specific matches
+  if (score <= 1 && (header.includes('name') || header.includes('type') || header.includes('id'))) {
+    score = 0; // Don't match generic columns to specific tables
+  }
+  
+  return score;
 };
 
 const filterDataForDataTable = (data, tableInfo) => {
