@@ -5,7 +5,7 @@ I want to build a Next.js 15.3 React 19 application that converts CSV files into
 Requirements:
 * Must be able to run the UI in Bolt.new (Next.js 15.3 and React 19)
 * Must be secure and protect user information
-* Must use Gemini 2.5 Flash (gemini-2.0-flash-preview-04-17) for AI processing of the CSV files and mapping to Postgres schema
+* Must use Gemini 2.5 Flash (gemini-2.5-flash) for AI processing of the CSV files and mapping to Postgres schema
 * Must accept one or multiple CSV files
 * Must create a proper Postgres Schema with multiple tables
 * Must with with Supabase Auth with a public.profiles table
@@ -61,7 +61,7 @@ Dreamschemas is a browser-based tool—built in Bolt.new (Next.js 15.3 & React 1
   - Tailwind CSS & Shadcn UI components (theme via `npx shadcn add …supabase.json`)  
   - React-flow for schema graph  
 - **AI Processing**  
-  - Call Gemini 2.5 Flash (`gemini-2.0-flash-preview-04-17`)  
+  - Call Gemini 2.5 Flash (`gemini-2.5-flash`)  
   - Input: CSV header + sample rows JSON  
   - Output: JSON schema draft  
 - **Back-end / Integration**  

@@ -58,7 +58,7 @@ Coming soon! The application will be deployed and available for testing.
    ```
    NEXT_PUBLIC_SUPABASE_URL=[INSERT SUPABASE PROJECT URL]
    NEXT_PUBLIC_SUPABASE_ANON_KEY=[INSERT SUPABASE PROJECT API ANON KEY]
-   GEMINI_API_KEY=[INSERT YOUR GEMINI API KEY]
+   GOOGLE_GENERATIVE_AI_API_KEY=[INSERT YOUR GEMINI API KEY]
    ```
 
    Both `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` can be found in [your Supabase project's API settings](https://supabase.com/dashboard/project/_?showConnect=true)

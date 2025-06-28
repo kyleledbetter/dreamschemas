@@ -402,7 +402,13 @@ export function DataSeedingInterface({
           },
           body: JSON.stringify({
             projectId,
-            useSimpleVersion: false, // Use advanced version with streaming by default
+            schema, // Pass the full schema for AI-powered logic generation
+            csvMetadata: files.map((file) => ({
+              headers: file.metadata.headers,
+              sampleData: file.metadata.sampleRows || [],
+              totalRows: file.metadata.totalRows,
+            })),
+            useSimpleVersion: false, // Use AI-powered version with streaming by default
           }),
         }
       );

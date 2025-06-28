@@ -1785,13 +1785,21 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                     <p className="text-muted-foreground">
                       Choose a Supabase project and deploy your schema with one
                       click.
+                      {schemaRecovered && state.projectData && (
+                        <span className="block mt-1 text-sm text-accent">
+                          ✓ Recovered schema detected with saved project data.
+                          You can proceed directly to seeding.
+                        </span>
+                      )}
                     </p>
                   </div>
                   <Button
                     onClick={() => goToStep("seed")}
                     className="gap-2"
                     disabled={
-                      !state.completedSteps.has("deploy") || !state.projectData
+                      (!state.completedSteps.has("deploy") &&
+                        !schemaRecovered) ||
+                      !state.projectData
                     }
                   >
                     Proceed

@@ -80,17 +80,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Prepare the request payload
+    // console.log(`📍 Edge Function URL: ${functionUrl}`);
+
+    // Prepare the request payload - ensure service key is NOT overridden by jobData
     const requestPayload = {
       ...jobData,
+      // Force these to override anything in jobData (remove any undefined values first)
       supabaseUrl: `https://${projectId}.supabase.co`,
       supabaseServiceKey: serviceRoleKey,
       projectConfig: {
+        ...jobData.projectConfig,
         projectId: projectId,
         databaseUrl: `https://${projectId}.supabase.co`,
         apiKey: serviceRoleKey,
       },
     };
+
+    // Ensure service key is never undefined (defensive programming)
+    if (!requestPayload.supabaseServiceKey) {
+      requestPayload.supabaseServiceKey = serviceRoleKey;
+    }
+    if (!requestPayload.projectConfig.apiKey) {
+      requestPayload.projectConfig.apiKey = serviceRoleKey;
+    }
+
+    console.log(`🚀 About to call Edge Function at: ${functionUrl}`);
+    console.log(`📋 Request payload keys: ${Object.keys(requestPayload).join(', ')}`);
+    console.log(`🔍 Payload schema tables: ${requestPayload.schema?.tables?.length || 'undefined'}`);
+    console.log(`📁 Payload file ID: ${requestPayload.fileId}`);
 
     // Call the user's Edge Function
     const edgeFunctionResponse = await fetch(functionUrl, {
@@ -102,6 +119,9 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify(requestPayload),
     });
 
+    console.log(`📡 Edge Function response status: ${edgeFunctionResponse.status}`);
+    console.log(`📡 Edge Function response headers:`, Object.fromEntries(edgeFunctionResponse.headers.entries()));
+    
     if (isStreaming) {
       // For streaming responses, we need to proxy the stream
       if (!edgeFunctionResponse.ok) {
@@ -125,6 +145,7 @@ export async function POST(request: NextRequest) {
       // For regular responses
       if (!edgeFunctionResponse.ok) {
         const errorText = await edgeFunctionResponse.text();
+        console.error(`❌ Edge Function failed with status ${edgeFunctionResponse.status}:`, errorText);
         return NextResponse.json(
           { error: `Edge Function failed: ${errorText}` },
           { status: edgeFunctionResponse.status }
@@ -132,6 +153,7 @@ export async function POST(request: NextRequest) {
       }
 
       const result = await edgeFunctionResponse.json();
+      console.log(`✅ Edge Function responded successfully`);
       return NextResponse.json(result);
     }
 
