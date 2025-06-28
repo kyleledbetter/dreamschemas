@@ -332,7 +332,13 @@ class DynamicCSVProcessor {
         }
         
         // Map data using AI-generated column mappers
-        const mappedData = validRows.map(row => mapCSVToTableColumns(row, tableName));
+        const mappedData = validRows.map(row => mapCSVToTableColumns(row, tableName))
+          .filter(row => row !== null); // Filter out failed mappings
+        
+        if (mappedData.length === 0) {
+          console.log(\`⏭️ No valid mapped data for \${tableName}, skipping\`);
+          continue;
+        }
         
         // Resolve foreign keys using AI-generated resolvers
         const resolvedData = await resolveForeignKeys(mappedData, tableName, this.supabaseClient);
@@ -340,18 +346,21 @@ class DynamicCSVProcessor {
         // Insert the data
         console.log(\`💾 Inserting \${resolvedData.length} rows into \${tableName}\`);
         
+        // Prepare data for insertion - remove client-generated IDs to let PostgreSQL generate them
+        const insertData = resolvedData.map(row => {
+          const { id, ...rowWithoutId } = row;
+          return rowWithoutId; // Let PostgreSQL generate UUID with uuid_generate_v4()
+        });
+        
         // Log sample data for debugging
-        if (resolvedData.length > 0) {
-          console.log(\`🔍 Sample row for \${tableName}:\`, Object.keys(resolvedData[0]).slice(0, 5).join(', '), '...');
+        if (insertData.length > 0) {
+          console.log(\`🔍 Sample row for \${tableName}:\`, Object.keys(insertData[0]).slice(0, 5).join(', '), '...');
         }
         
         try {
           const { data, error } = await this.supabaseClient
             .from(tableName)
-            .upsert(resolvedData, { 
-              onConflict: 'id',
-              ignoreDuplicates: false 
-            })
+            .insert(insertData) // Use insert instead of upsert since we're not providing IDs
             .select();
             
           if (error) {

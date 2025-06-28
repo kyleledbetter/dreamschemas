@@ -72,15 +72,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`🚀 Generating dynamic edge function for schema with ${schema.tables.length} tables (v3.0 - Bulletproof Edition)`);
+    console.log(`🚀 Generating dynamic edge function for schema with ${schema.tables.length} tables (v4.0 - AI-Schema-Aware Edition)`);
 
-    // Generate the seeding logic using the robust, deterministic simple generator
-    const seedingLogic = generateSimpleSeedingLogic(schema);
+    // Build comprehensive schema analysis for intelligent processing
+    const tableAnalysis = analyzeSchemaStructure(schema);
+
+    // Generate the seeding logic using the advanced AI-schema-aware generator
+    const seedingLogic = generateAdvancedSeedingLogic(schema, tableAnalysis);
 
     // Step 2: Generate the complete edge function using the template
     const functionSource = generateDynamicSeederFunction(seedingLogic);
 
-    console.log(`📋 Generated edge function (${functionSource.length} chars) with deterministic logic`);
+    console.log(`📋 Generated edge function (${functionSource.length} chars) with AI-schema-aware logic`);
 
     // Step 3: Deploy the Edge Function using the Supabase Management API
     const formData = new FormData();
@@ -123,13 +126,24 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Dynamic Edge Function deployed successfully for ${schema.tables.length} tables`,
+      message: `Advanced AI-Schema-Aware Edge Function deployed successfully for ${schema.tables.length} tables`,
       functionUrl: `https://${projectId}.supabase.co/functions/v1/seed-data`,
       function: functionData,
-      version: "deterministic",
+      version: "ai-schema-aware-v4",
       metadata: {
         tablesCount: schema.tables.length,
         relationshipsCount: schema.relationships.length,
+        tableTypes: tableAnalysis.reduce((acc: Record<string, number>, t: { type: string }) => {
+          acc[t.type] = (acc[t.type] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>),
+        features: [
+          "UUID Generation with uuid_generate_v4()",
+          "Advanced Foreign Key Resolution", 
+          "Schema-Aware Column Mapping",
+          "Type-Aware Data Validation",
+          "Dependency-Based Table Processing"
+        ]
       }
     });
   } catch (error) {
@@ -142,401 +156,887 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * Generate simple fallback seeding logic when AI is not available
+ * Analyzes AI-generated schema to understand table types and relationships
  */
-function generateSimpleSeedingLogic(schema: DatabaseSchema): SeedingLogic {
-  console.log("🔧 Generating simple fallback seeding logic...");
-  console.log(`🏗️ Using actual table names: ${schema.tables.map(t => t.name).join(', ')}`);
+function analyzeSchemaStructure(schema: DatabaseSchema) {
+    return schema.tables.map(table => {
+      // Analyze table structure to determine its type
+      const nonSystemColumns = table.columns.filter(col => 
+        !['id', 'created_at', 'updated_at'].includes(col.name)
+      );
+      
+      // Check if it's a lookup table (typically has only name/title + maybe one other field)
+      const isLookupTable = nonSystemColumns.length <= 2 && 
+        nonSystemColumns.some(col => 
+          col.name.includes('name') || col.name.includes('title') || col.name.includes('status')
+        );
+      
+      // Check if it's a junction table (for many-to-many relationships)
+      const isJunctionTable = nonSystemColumns.length <= 3 && 
+        nonSystemColumns.filter(col => col.name.endsWith('_id')).length >= 2;
+      
+      // Find foreign key columns
+      const foreignKeys = table.columns.filter(col => 
+        col.name.endsWith('_id') && 
+        (col.constraints.some(c => c.type === 'FOREIGN KEY') || col.name === 'user_id')
+      );
+      
+      // Determine source CSV columns for this table
+      const sourceColumns = table.columns
+        .filter(col => col.originalCSVColumn)
+        .map(col => col.originalCSVColumn!);
+      
+      return {
+        name: table.name,
+        type: isJunctionTable ? 'junction' : isLookupTable ? 'lookup' : 'data',
+        nonSystemColumns: nonSystemColumns.map(col => col.name),
+        foreignKeys: foreignKeys.map(fk => ({
+          column: fk.name,
+          targetTable: fk.name === 'user_id' ? 'auth.users' : 
+            fk.name.replace('_id', '') + 's' // Simple pluralization
+        })),
+        sourceColumns,
+        columnCount: table.columns.length
+      };
+    });
+}
+
+/**
+ * Generate advanced AI-schema-aware seeding logic
+ * Handles proper UUID generation, sophisticated table relationships, and normalization
+ */
+function generateAdvancedSeedingLogic(schema: DatabaseSchema, tableAnalysis: ReturnType<typeof analyzeSchemaStructure>): SeedingLogic {
+  console.log("🔧 Generating advanced AI-schema-aware seeding logic...");
+  console.log(`🏗️ Processing ${schema.tables.length} tables: ${schema.tables.map(t => t.name).join(', ')}`);
+  console.log(`🔗 Processing ${schema.relationships.length} relationships`);
   
   const relationships = schema.relationships;
 
   return {
     constants: `
-// Dynamic schema configuration with full table definitions
+// Advanced AI-Schema-Aware Configuration
 const SCHEMA_CONFIG = {
   batchSize: 50,
   maxRetries: 3,
   timeoutMs: 1200,
   tables: ${JSON.stringify(schema.tables)},
-  relationships: ${JSON.stringify(relationships.map(r => ({ 
-    source: r.sourceTable, 
-    target: r.targetTable 
-  })))}
+  relationships: ${JSON.stringify(relationships)},
+  tableAnalysis: ${JSON.stringify(tableAnalysis)}
 };
 
 const PERFORMANCE_CONFIG = {
   enableCaching: true,
   logLevel: 'info',
   validateData: true,
-  complexityScore: ${schema.tables.length * 2 + schema.relationships.length}
-};`,
+  complexityScore: ${schema.tables.length * 2 + schema.relationships.length},
+  useUUIDGeneration: true,
+  enableFKResolution: true
+};
+
+// UUID Generation Helper - Uses PostgreSQL's uuid_generate_v4()
+const generateUUID = () => {
+  // In edge functions, we'll use crypto.randomUUID() as fallback
+  // but ensure proper UUID format for PostgreSQL
+  return crypto.randomUUID();
+};
+
+// Table Type Analysis from AI Schema
+const TABLE_TYPES = {
+${tableAnalysis.map(t => `  "${t.name}": "${t.type}"`).join(',\n')}
+};
+
+console.log('\ud83e\uddee AI Schema Analysis:', SCHEMA_CONFIG.tableAnalysis);`,
 
     tableProcessors: `
-// DYNAMIC FUZZY COLUMN MATCHING HELPERS
+// Advanced AI-Schema-Aware Table Processing
+
+// String similarity functions for intelligent column matching
 const calculateStringSimilarity = (str1, str2) => {
   const longer = str1.length > str2.length ? str1 : str2;
   const shorter = str1.length > str2.length ? str2 : str1;
-  
   if (longer.length === 0) return 1.0;
-  
   const editDistance = levenshteinDistance(longer, shorter);
   return (longer.length - editDistance) / longer.length;
 };
 
 const levenshteinDistance = (str1, str2) => {
-  const matrix = [];
-  
-  for (let i = 0; i <= str2.length; i++) {
-    matrix[i] = [i];
-  }
-  
-  for (let j = 0; j <= str1.length; j++) {
-    matrix[0][j] = j;
-  }
-  
+  const matrix = Array(str2.length + 1).fill().map(() => Array(str1.length + 1).fill(0));
+  for (let i = 0; i <= str2.length; i++) matrix[i][0] = i;
+  for (let j = 0; j <= str1.length; j++) matrix[0][j] = j;
   for (let i = 1; i <= str2.length; i++) {
     for (let j = 1; j <= str1.length; j++) {
-      if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1
-        );
-      }
+      matrix[i][j] = str2[i-1] === str1[j-1] ? matrix[i-1][j-1] : 
+        Math.min(matrix[i-1][j-1], matrix[i][j-1], matrix[i-1][j]) + 1;
     }
   }
-  
   return matrix[str2.length][str1.length];
 };
 
-const normalizeColumnName = (name) => {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_|_$/g, '');
-};
+const normalizeColumnName = (name) => name?.toLowerCase().trim().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '') || '';
 
-const findBestColumnMatch = (csvHeader, allowedColumns) => {
-  if (allowedColumns.length === 0) {
-    return normalizeColumnName(csvHeader);
-  }
-  
-  const normalizedCsvHeader = normalizeColumnName(csvHeader);
-  
-  // 1. Exact match
-  if (allowedColumns.includes(normalizedCsvHeader)) {
-    return normalizedCsvHeader;
-  }
-  
-  // 2. Find best fuzzy match
-  let bestMatch = null;
-  let bestScore = 0;
-  const SIMILARITY_THRESHOLD = 0.6; // 60% similarity required
-  
-  allowedColumns.forEach(dbColumn => {
-    // Use a simpler, more reliable direct similarity score
-    const score = calculateStringSimilarity(normalizedCsvHeader, dbColumn);
+// Advanced column matching using AI schema information
+const findBestColumnMatch = (csvHeader, targetColumns, tableType) => {
+  try {
+    if (!csvHeader || !targetColumns?.length) return null;
     
-    if (score > bestScore && score >= SIMILARITY_THRESHOLD) {
-      bestScore = score;
-      bestMatch = dbColumn;
-    }
-  });
-  
-  return bestMatch;
-};
-
-// Dynamic table processing - get table names from schema
-const ALL_TABLES = SCHEMA_CONFIG.tables.map(t => t.name);
-
-// Topologically sort tables to respect foreign key dependencies
-const sortedTables = (() => {
-  const nodes = ALL_TABLES.map(name => ({ name, dependencies: new Set<string>() }));
-  const nameToNode = new Map(nodes.map(n => [n.name, n]));
-
-  (SCHEMA_CONFIG.relationships || []).forEach(rel => {
-    // If rel.sourceTable depends on rel.targetTable...
-    const sourceNode = nameToNode.get(rel.source);
-    const targetNode = nameToNode.get(rel.target);
-    if (sourceNode && targetNode) {
-      sourceNode.dependencies.add(rel.target);
-    }
-  });
-
-  const sorted: string[] = [];
-  const visited = new Set<string>();
-  const visiting = new Set<string>();
-
-  function visit(node: { name: string; dependencies: Set<string> }) {
-    if (visiting.has(node.name)) {
-      console.warn(\`Circular dependency detected involving \${node.name}, breaking sort.\`);
-      return;
-    }
-    if (visited.has(node.name)) {
-      return;
-    }
-
-    visiting.add(node.name);
-    visited.add(node.name);
-
-    node.dependencies.forEach(depName => {
-      const depNode = nameToNode.get(depName);
-      if (depNode) {
-        visit(depNode);
+    // Ensure csvHeader is a string
+    const headerStr = String(csvHeader).trim();
+    if (!headerStr) return null;
+    
+    const normalizedCsv = normalizeColumnName(headerStr);
+    if (!normalizedCsv) return null;
+    
+    // Exact match first
+    const exactMatch = targetColumns.find(col => {
+      try {
+        return normalizeColumnName(String(col)) === normalizedCsv;
+      } catch {
+        return false;
+      }
+    });
+    if (exactMatch) return exactMatch;
+    
+    // Fuzzy matching with table-type-aware scoring
+    let bestMatch = null;
+    let bestScore = 0;
+    const threshold = tableType === 'lookup' ? 0.4 : 0.6; // Even lower threshold for lookup tables
+    
+    targetColumns.forEach(dbColumn => {
+      try {
+        const normalizedDb = normalizeColumnName(String(dbColumn));
+        if (!normalizedDb) return;
+        
+        const score = calculateStringSimilarity(normalizedCsv, normalizedDb);
+        if (score > bestScore && score >= threshold) {
+          bestScore = score;
+          bestMatch = dbColumn;
+        }
+      } catch (error) {
+        console.warn(\`Column matching error for \${dbColumn}: \${error.message}\`);
       }
     });
     
-    visiting.delete(node.name);
-    sorted.push(node.name);
+    return bestMatch;
+  } catch (error) {
+    console.error(\`findBestColumnMatch error: \${error.message}\`);
+    return null;
   }
+};
 
-  nodes.forEach(node => visit(node));
-  return sorted;
-})();
-
-const TABLE_PROCESSING_ORDER = sortedTables;
-console.log('🏗️ TABLE_PROCESSING_ORDER (dependency sorted):', TABLE_PROCESSING_ORDER);
-
-const filterDataForTable = (data, tableName) => {
-  console.log(\`📋 Filtering \${data.length} rows for table: \${tableName}\`);
+// Build dependency-aware table processing order
+const buildTableProcessingOrder = () => {
+  const tables = SCHEMA_CONFIG.tableAnalysis;
+  const sorted = [];
+  const visited = new Set();
+  const visiting = new Set();
   
-  // Get table info from schema
-  const table = SCHEMA_CONFIG.tables.find(t => t.name === tableName);
-  if (!table) {
-    console.warn(\`⚠️  Table \${tableName} not found in schema\`);
+  const visit = (tableName) => {
+    if (visiting.has(tableName)) return; // Circular dependency
+    if (visited.has(tableName)) return;
+    
+    visiting.add(tableName);
+    visited.add(tableName);
+    
+    // Visit dependencies first (tables this table references)
+    const tableInfo = tables.find(t => t.name === tableName);
+    if (tableInfo?.foreignKeys) {
+      tableInfo.foreignKeys.forEach(fk => {
+        if (!fk.targetTable.startsWith('auth.') && tables.find(t => t.name === fk.targetTable)) {
+          visit(fk.targetTable);
+        }
+      });
+    }
+    
+    visiting.delete(tableName);
+    sorted.push(tableName);
+  };
+  
+  // Process lookup tables first, then data tables, then junction tables
+  const lookupTables = tables.filter(t => t.type === 'lookup').map(t => t.name);
+  const dataTables = tables.filter(t => t.type === 'data').map(t => t.name);
+  const junctionTables = tables.filter(t => t.type === 'junction').map(t => t.name);
+  
+  [...lookupTables, ...dataTables, ...junctionTables].forEach(visit);
+  
+  return sorted;
+};
+
+const TABLE_PROCESSING_ORDER = buildTableProcessingOrder();
+console.log('\ud83c\udfd7\ufe0f Advanced Table Processing Order:', TABLE_PROCESSING_ORDER);
+
+// AI-Schema-Aware data filtering for each table type
+const filterDataForTable = (data, tableName) => {
+  console.log(\`\ud83d\udccb Filtering \${data.length} rows for \${tableName}...\`);
+  
+  const tableInfo = SCHEMA_CONFIG.tableAnalysis.find(t => t.name === tableName);
+  if (!tableInfo) {
+    console.warn(\`\u26a0\ufe0f  Unknown table: \${tableName}\`);
     return [];
   }
   
-  // Check if this is a lookup table (has only id, name, created_at, updated_at columns)
-  const isLookupTable = table.columns && 
-    table.columns.filter(col => !['id', 'created_at', 'updated_at'].includes(col.name)).length === 1 &&
-    table.columns.some(col => col.name === 'name');
+  console.log(\`\ud83d\udd0d \${tableName}: Detected as \${tableInfo.type} table\`);
   
-  if (isLookupTable) {
-    console.log(\`🏷️  \${tableName}: Detected as lookup table\`);
-
-    // Find the single data column for the lookup table (e.g., 'name', 'status')
-    const lookupDbColumn = table.columns.find(col => !['id', 'created_at', 'updated_at'].includes(col.name))?.name;
-    
-    if (!lookupDbColumn) {
-        console.warn(\`⚠️  Could not determine the lookup column for \${tableName}\`);
-        return [];
-    }
-    
-    // Find the best matching header in the CSV for that column
-    const csvHeaders = data.length > 0 ? Object.keys(data[0]) : [];
-    const bestCsvHeader = findBestColumnMatch(lookupDbColumn, csvHeaders);
-    
-    if (!bestCsvHeader) {
-        console.warn(\`⚠️  Could not find a matching CSV header for lookup column '\${lookupDbColumn}' in table \${tableName}\`);
-        return [];
-    }
-
-    console.log(\`🔍  Mapping CSV header '\${bestCsvHeader}' to lookup column '\${lookupDbColumn}' for table \${tableName}\`);
-    
-    // Extract unique, non-empty values from that specific CSV column
-    const uniqueValues = new Set(
-      data
-        .map(row => row[bestCsvHeader])
-        .filter(value => value !== null && value !== undefined && String(value).trim() !== '')
-        .map(value => String(value).trim())
-    );
-    
-    // Convert to array of objects with the correct field name
-    const filteredData = Array.from(uniqueValues).map(value => ({ [lookupDbColumn]: value }));
-    console.log(\`✅ \${tableName}: \${filteredData.length} unique values extracted for lookup table\`);
-    return filteredData;
+  if (tableInfo.type === 'lookup') {
+    return filterDataForLookupTable(data, tableInfo);
+  } else if (tableInfo.type === 'junction') {
+    return filterDataForJunctionTable(data, tableInfo);
   } else {
-    console.log(\`📊 \${tableName}: Detected as data table\`);
-    // For data tables, pass through all data
-    const filteredData = data.filter(row => row && typeof row === 'object');
-    console.log(\`✅ \${tableName}: \${filteredData.length} rows passed filtering\`);
-    return filteredData;
+    return filterDataForDataTable(data, tableInfo);
   }
-};`,
-
-    columnMappers: `
-// Schema-aware mapping - get table schema info
-const getTableSchema = (tableName) => {
-  const schemaConfig = SCHEMA_CONFIG.tables || [];
-  return schemaConfig.find(t => t === tableName) ? {} : {}; // Simple version doesn't have detailed schema
 };
 
-// Get table schema from the passed schema configuration
-const getTableColumns = (tableName) => {
-  // This will be replaced with actual schema data when the function is generated
-  const schemaData = SCHEMA_CONFIG.tables || [];
-  const table = schemaData.find(t => t.name === tableName);
+const filterDataForLookupTable = (data, tableInfo) => {
+  console.log(\`\ud83c\udff7\ufe0f  \${tableInfo.name}: Processing lookup table for \${tableInfo.nonSystemColumns.join(', ')}\`);
   
-  if (!table || !table.columns) {
-    console.warn(\`⚠️  No schema found for table \${tableName}, allowing all columns\`);
-    return []; // Return empty array to allow all columns
+  const csvHeaders = data.length > 0 ? Object.keys(data[0]) : [];
+  
+  if (csvHeaders.length === 0) {
+    console.warn(\`\u26a0\ufe0f  \${tableInfo.name}: No CSV data available for lookup table\`);
+    return [];
   }
   
-  // Return column names, excluding system columns that we generate
-  return table.columns
-    .map(col => col.name)
-    .filter(name => !['id', 'created_at', 'updated_at'].includes(name));
-};
-
-const mapCSVToTableColumns = (csvRow, tableName) => {
-  console.log(\`🔄 \${tableName}: Starting dynamic fuzzy column matching...\`);
+  console.log(\`\ud83d\udccb \${tableInfo.name}: Available CSV headers: \${csvHeaders.join(', ')}\`);
+  console.log(\`\ud83c\udfaf \${tableInfo.name}: Target columns: \${tableInfo.nonSystemColumns.join(', ')}\`);
   
-  const mapped = {
-    id: crypto.randomUUID(),
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
-  };
+  // For lookup tables, we need to extract unique values for the lookup column
+  // The lookup column is typically the main data column (usually 'name')
+  const targetColumn = tableInfo.nonSystemColumns[0] || 'name';
   
-  // Get allowed columns from schema
-  const allowedColumns = getTableColumns(tableName);
-  console.log(\`📋 \${tableName}: Target columns (\${allowedColumns.length}): \${allowedColumns.join(', ')}\`);
+  // Find ALL CSV columns that could contain lookup values for this table
+  // We'll analyze the table name to guess what kind of data it should contain
+  const tableName = tableInfo.name.toLowerCase();
+  const potentialSourceColumns = [];
   
-  const mappedFields = [];
-  const skippedFields = [];
-  
-  Object.keys(csvRow).forEach(csvKey => {
-    const originalValue = csvRow[csvKey];
+  // Smart column detection based on table name and content
+  csvHeaders.forEach(header => {
+    const headerLower = header.toLowerCase();
     
-    // Skip empty values
-    if (originalValue === null || originalValue === undefined || originalValue === '') {
+    // Direct name matching
+    if (headerLower.includes(tableName.replace(/s$/, '')) || // Remove plural
+        headerLower.includes('name') ||
+        headerLower.includes('title')) {
+      potentialSourceColumns.push({ header, priority: 3 });
       return;
     }
     
-    // Skip system columns
-    const normalizedKey = normalizeColumnName(csvKey);
-    if (['id', 'created_at', 'updated_at'].includes(normalizedKey)) {
+    // Table-specific matching
+    if (tableName.includes('jurisdiction') && (headerLower.includes('state') || headerLower.includes('county') || headerLower.includes('city'))) {
+      potentialSourceColumns.push({ header, priority: 2 });
       return;
     }
     
-    // Find best matching database column
-    const targetColumn = findBestColumnMatch(csvKey, allowedColumns);
+    if (tableName.includes('business') && (headerLower.includes('business') || headerLower.includes('company'))) {
+      potentialSourceColumns.push({ header, priority: 2 });
+      return;
+    }
     
-    if (targetColumn) {
-      mapped[targetColumn] = String(originalValue).trim();
-      mappedFields.push(\`"\${csvKey}" → \${targetColumn}\`);
-    } else {
-      skippedFields.push(csvKey);
+    if (tableName.includes('type') && (headerLower.includes('type') || headerLower.includes('category'))) {
+      potentialSourceColumns.push({ header, priority: 2 });
+      return;
+    }
+    
+    // Generic patterns
+    if (headerLower.includes('name') || headerLower.includes('type') || headerLower.includes('status') || 
+        headerLower.includes('category') || headerLower.includes('class')) {
+      potentialSourceColumns.push({ header, priority: 1 });
     }
   });
   
-  console.log(\`🎯 \${tableName}: Dynamic mapping results:\`);
-  console.log(\`   ✅ Mapped (\${mappedFields.length}): \${mappedFields.join(', ')}\`);
-  if (skippedFields.length > 0) {
-    console.log(\`   ⏭️  Skipped (\${skippedFields.length}): \${skippedFields.join(', ')}\`);
-  }
-  console.log(\`🔍 \${tableName}: Sample mapped row:\`, JSON.stringify(mapped, null, 2));
+  // Sort by priority and take the best match
+  potentialSourceColumns.sort((a, b) => b.priority - a.priority);
   
-  return mapped;
+  if (potentialSourceColumns.length === 0) {
+    console.warn(\`\u26a0\ufe0f  \${tableInfo.name}: No suitable source columns found for lookup table\`);
+    console.log(\`\ud83d\udccb Available headers: \${csvHeaders.join(', ')}\`);
+    return [];
+  }
+  
+  const bestSourceColumn = potentialSourceColumns[0].header;
+  console.log(\`\ud83d\udd0d \${tableInfo.name}: Using '\${bestSourceColumn}' as source for '\${targetColumn}'\`);
+  
+  // Extract ALL unique non-empty values from the source column
+  console.log(\`\ud83d\udd0d \${tableInfo.name}: Extracting values from column '\${bestSourceColumn}'\`);
+  console.log(\`\ud83d\udccb \${tableInfo.name}: Sample raw values: \${data.slice(0, 3).map(row => row[bestSourceColumn]).join(', ')}\`);
+  
+  const allValues = data
+    .map(row => row[bestSourceColumn])
+    .filter(val => val != null && val !== '' && String(val).trim() !== '')
+    .map(val => String(val).trim());
+  
+  const uniqueValues = [...new Set(allValues)];
+  
+  console.log(\`\ud83d\udccb \${tableInfo.name}: Found \${allValues.length} total values, \${uniqueValues.length} unique values\`);
+  console.log(\`\ud83d\udd0d \${tableInfo.name}: Unique values: \${uniqueValues.slice(0, 10).join(', ')}\${uniqueValues.length > 10 ? '...' : ''}\`);
+  
+  if (uniqueValues.length === 0) {
+    console.warn(\`\u26a0\ufe0f  \${tableInfo.name}: No valid values found in column '\${bestSourceColumn}'\`);
+    return [];
+  }
+  
+  // Create lookup table records
+  const lookupRecords = uniqueValues.map(value => ({ [targetColumn]: value }));
+  
+  console.log(\`\u2705 \${tableInfo.name}: Generated \${lookupRecords.length} lookup records\`);
+  return lookupRecords;
 };
 
-const convertValue = (value, columnName, columnType) => {
-  if (value === null || value === undefined || value === '') return null;
+const filterDataForDataTable = (data, tableInfo) => {
+  // For data tables, include all rows but we'll filter columns during mapping
+  const filtered = data.filter(row => row && typeof row === 'object');
+  console.log(\`\ud83d\udcca \${tableInfo.name}: \${filtered.length} data rows\`);
+  return filtered;
+};
+
+const filterDataForJunctionTable = (data, tableInfo) => {
+  // Junction tables are typically populated based on relationships in the data
+  // For now, treat them like data tables
+  return filterDataForDataTable(data, tableInfo);
+};`,
+
+    columnMappers: `
+// Advanced AI-Schema-Aware Column Mapping
+
+// Get full table schema information from AI-generated schema
+const getTableSchema = (tableName) => {
+  const table = SCHEMA_CONFIG.tables.find(t => t.name === tableName);
+  return table || null;
+};
+
+// Get mappable columns (excluding system columns)
+const getTableColumns = (tableName) => {
+  const tableInfo = SCHEMA_CONFIG.tableAnalysis.find(t => t.name === tableName);
+  return tableInfo ? tableInfo.nonSystemColumns : [];
+};
+
+// Advanced type-aware value conversion
+const convertValue = (value, column) => {
+  if (value == null || value === '') return null;
   
   const str = String(value).trim();
-  const type = columnType.toLowerCase();
+  const type = column.type.toLowerCase();
   
-  if (type.includes('int')) {
-    const num = parseInt(str);
-    return isNaN(num) ? null : num;
+  try {
+    switch (type) {
+      case 'uuid':
+        // Validate UUID format or generate new one
+        return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str) 
+          ? str : generateUUID();
+      
+      case 'smallint':
+      case 'integer':
+      case 'bigint':
+        const int = parseInt(str, 10);
+        return isNaN(int) ? null : int;
+      
+      case 'numeric':
+      case 'decimal':
+      case 'real':
+      case 'double precision':
+        const float = parseFloat(str);
+        return isNaN(float) ? null : float;
+      
+      case 'boolean':
+        return ['true', '1', 'yes', 'y', 'on'].includes(str.toLowerCase());
+      
+      case 'date':
+        const date = new Date(str);
+        return isNaN(date.getTime()) ? null : date.toISOString().split('T')[0];
+      
+      case 'timestamp':
+      case 'timestamptz':
+        const timestamp = new Date(str);
+        return isNaN(timestamp.getTime()) ? null : timestamp.toISOString();
+      
+      case 'jsonb':
+      case 'json':
+        try {
+          return typeof str === 'string' && str.startsWith('{') ? JSON.parse(str) : str;
+        } catch {
+          return str;
+        }
+      
+      case 'varchar':
+      case 'text':
+      case 'char':
+      default:
+        return column.length && str.length > column.length ? str.substring(0, column.length) : str;
+    }
+  } catch (error) {
+    console.warn(\`\u26a0\ufe0f  Value conversion failed for \${column.name} (\${type}): \${error.message}\`);
+    return null;
   }
-  if (type.includes('numeric') || type.includes('decimal')) {
-    const num = parseFloat(str);
-    return isNaN(num) ? null : num;
+};
+
+// Advanced schema-aware CSV to table mapping
+const mapCSVToTableColumns = (csvRow, tableName) => {
+  try {
+    console.log(\`\ud83d\udd04 \${tableName}: AI-schema-aware mapping...\`);
+    
+    if (!csvRow || typeof csvRow !== 'object') {
+      console.error(\`\u274c \${tableName}: Invalid CSV row data\`);
+      return null;
+    }
+    
+    const tableSchema = getTableSchema(tableName);
+    const tableInfo = SCHEMA_CONFIG.tableAnalysis.find(t => t.name === tableName);
+    
+    if (!tableSchema || !tableInfo) {
+      console.error(\`\u274c \${tableName}: Schema not found\`);
+      return null;
+    }
+    
+    // Initialize with proper UUID and timestamps using PostgreSQL functions
+    const mapped = {
+      id: generateUUID(), // This will be a proper UUID for PostgreSQL
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    
+    const mappedFields = [];
+    const skippedFields = [];
+    const conversionErrors = [];
+    
+    // Get target columns for this table
+    const targetColumns = getTableColumns(tableName);
+    const csvHeaders = Object.keys(csvRow).filter(key => key != null);
+    
+    console.log(\`\ud83d\udccb \${tableName}: Mapping \${csvHeaders.length} CSV fields to \${targetColumns.length} target columns\`);
+    
+    // Map each target column to best CSV field
+    targetColumns.forEach(targetCol => {
+      try {
+        const column = tableSchema.columns.find(c => c.name === targetCol);
+        if (!column) return;
+        
+        // Find best matching CSV header
+        const bestCsvHeader = findBestColumnMatch(targetCol, csvHeaders, tableInfo.type);
+        
+        if (bestCsvHeader && csvRow[bestCsvHeader] != null && csvRow[bestCsvHeader] !== '') {
+          try {
+            const convertedValue = convertValue(csvRow[bestCsvHeader], column);
+            if (convertedValue !== null && convertedValue !== undefined) {
+              mapped[targetCol] = convertedValue;
+              mappedFields.push(\`"\${bestCsvHeader}" → \${targetCol} (\${column.type})\`);
+            }
+          } catch (error) {
+            conversionErrors.push(\`\${targetCol}: \${error.message}\`);
+            console.warn(\`\u26a0\ufe0f  \${tableName}: Conversion error for \${targetCol}: \${error.message}\`);
+          }
+        } else {
+          // Check if column is nullable or has default
+          if (!column.nullable && !column.defaultValue) {
+            console.warn(\`\u26a0\ufe0f  \${tableName}: Required column \${targetCol} has no matching CSV data\`);
+          }
+        }
+      } catch (error) {
+        console.error(\`\u274c \${tableName}: Error processing column \${targetCol}: \${error.message}\`);
+      }
+    });
+    
+    // Log unmapped CSV fields
+    csvHeaders.forEach(csvHeader => {
+      try {
+        const isSystemField = ['id', 'created_at', 'updated_at'].includes(normalizeColumnName(csvHeader));
+        const isMapped = mappedFields.some(field => field.includes(\`"\${csvHeader}"\`));
+        
+        if (!isSystemField && !isMapped) {
+          skippedFields.push(csvHeader);
+        }
+      } catch (error) {
+        console.warn(\`\u26a0\ufe0f  Error checking CSV header \${csvHeader}: \${error.message}\`);
+      }
+    });
+    
+    console.log(\`\ud83c\udfaf \${tableName}: Mapping complete\`);
+    console.log(\`   \u2705 Mapped (\${mappedFields.length}): \${mappedFields.slice(0, 3).join(', ')}\${mappedFields.length > 3 ? '...' : ''}\`);
+    
+    if (skippedFields.length > 0) {
+      console.log(\`   \u23ed\ufe0f  Skipped (\${skippedFields.length}): \${skippedFields.slice(0, 3).join(', ')}\${skippedFields.length > 3 ? '...' : ''}\`);
+    }
+    
+    if (conversionErrors.length > 0) {
+      console.log(\`   \u26a0\ufe0f  Conversion errors (\${conversionErrors.length}): \${conversionErrors.slice(0, 2).join(', ')}\`);
+    }
+    
+    // Check if we have any meaningful data mapped
+    const meaningfulFieldCount = mappedFields.length;
+    if (meaningfulFieldCount === 0) {
+      console.warn(\`\u26a0\ufe0f  \${tableName}: No meaningful data could be mapped from CSV\`);
+      return null;
+    }
+    
+    return mapped;
+    
+  } catch (error) {
+    console.error(\`\u274c \${tableName}: Fatal mapping error: \${error.message}\`);
+    return null;
   }
-  if (type.includes('bool')) {
-    return ['true', '1', 'yes', 'y'].includes(str.toLowerCase());
-  }
-  if (type.includes('timestamp') || type.includes('date')) {
-    const date = new Date(str);
-    return isNaN(date.getTime()) ? null : date.toISOString();
-  }
-  
-  return str;
 };`,
 
     relationshipResolvers: `
-class ForeignKeyResolver {
-  constructor() {
-    this.cache = new Map();
+// Advanced Foreign Key Resolution System
+class AdvancedForeignKeyResolver {
+  constructor(supabaseClient) {
+    this.client = supabaseClient;
+    this.cache = new Map(); // Cache FK lookups for performance
+    this.lookupMaps = new Map(); // Cache complete lookup tables
   }
   
-  async resolveFK(tableName, value) {
-    if (!value) return null;
+  // Pre-load lookup table data for fast FK resolution
+  async preloadLookupTable(tableName) {
+    if (this.lookupMaps.has(tableName)) return;
     
-    const cacheKey = \`\${tableName}:\${value}\`;
+    console.log(\`\ud83d\udccb Pre-loading lookup table: \${tableName}\`);
+    
+    try {
+      const { data, error } = await this.client
+        .from(tableName)
+        .select('id, name')
+        .limit(1000);
+      
+      if (error) {
+        console.warn(\`\u26a0\ufe0f  Failed to preload \${tableName}: \${error.message}\`);
+        this.lookupMaps.set(tableName, new Map());
+        return;
+      }
+      
+      const lookupMap = new Map();
+      data?.forEach(row => {
+        // Map both name->id and id->id for flexible lookup
+        if (row.name) lookupMap.set(row.name.toLowerCase().trim(), row.id);
+        lookupMap.set(row.id, row.id);
+      });
+      
+      this.lookupMaps.set(tableName, lookupMap);
+      console.log(\`\u2705 Loaded \${lookupMap.size} entries for \${tableName}\`);
+      
+    } catch (error) {
+      console.error(\`\u274c Failed to preload \${tableName}:\`, error.message);
+      this.lookupMaps.set(tableName, new Map());
+    }
+  }
+  
+  // Resolve a foreign key value
+  async resolveForeignKey(value, targetTable, sourceColumn) {
+    if (!value || value === '') return null;
+    
+    const cacheKey = \`\${targetTable}:\${value}\`;
     if (this.cache.has(cacheKey)) {
       return this.cache.get(cacheKey);
     }
     
-    // Simple FK resolution - return null for now
-    // In a real implementation, this would query the database
-    return null;
+    let resolvedId = null;
+    
+    try {
+      // Handle special Supabase auth users table
+      if (targetTable === 'auth.users') {
+        // For auth.users, we'll pass through the value assuming it's a valid user_id
+        // In production, you might want to validate this
+        resolvedId = value;
+      } else {
+        // For lookup tables, try to resolve by name or id
+        await this.preloadLookupTable(targetTable);
+        const lookupMap = this.lookupMaps.get(targetTable);
+        
+        if (lookupMap) {
+          // First try exact ID match
+          if (lookupMap.has(value)) {
+            resolvedId = lookupMap.get(value);
+          } else {
+            // Try name-based lookup (case-insensitive)
+            const normalizedValue = String(value).toLowerCase().trim();
+            resolvedId = lookupMap.get(normalizedValue);
+          }
+        }
+        
+        // If still not found and it looks like a UUID, pass it through
+        if (!resolvedId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{3}-[0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+          resolvedId = value;
+        }
+      }
+      
+      this.cache.set(cacheKey, resolvedId);
+      return resolvedId;
+      
+    } catch (error) {
+      console.warn(\`\u26a0\ufe0f  FK resolution failed for \${sourceColumn} -> \${targetTable}: \${error.message}\`);
+      return null;
+    }
   }
 }
 
-const resolveForeignKeys = async (data, tableName) => {
-  console.log(\`🔗 \${tableName}: Starting FK resolution with \${data.length} rows...\`);
-  const resolver = new ForeignKeyResolver();
+// Main foreign key resolution function
+const resolveForeignKeys = async (data, tableName, supabaseClient) => {
+  console.log(\`\ud83d\udd17 \${tableName}: Resolving foreign keys for \${data.length} rows...\`);
   
-  // Simple pass-through - no FK resolution in basic version
-  console.log(\`✅ \${tableName}: FK resolution complete, returning \${data.length} rows\`);
-  if (data.length > 0) {
-    console.log(\`🔍 \${tableName}: Sample resolved row:\`, JSON.stringify(data[0], null, 2));
+  const tableInfo = SCHEMA_CONFIG.tableAnalysis.find(t => t.name === tableName);
+  if (!tableInfo || !tableInfo.foreignKeys.length) {
+    console.log(\`\u23ed\ufe0f  \${tableName}: No foreign keys to resolve\`);
+    return data;
   }
   
-  return data;
+  const resolver = new AdvancedForeignKeyResolver(supabaseClient);
+  const resolvedData = [];
+  const errors = [];
+  
+  console.log(\`\ud83d\udd0d \${tableName}: Found \${tableInfo.foreignKeys.length} FK columns: \${tableInfo.foreignKeys.map(fk => fk.column).join(', ')}\`);
+  
+  // Pre-load all referenced lookup tables
+  const referencedTables = [...new Set(tableInfo.foreignKeys.map(fk => fk.targetTable))];
+  await Promise.all(
+    referencedTables
+      .filter(table => !table.startsWith('auth.'))
+      .map(table => resolver.preloadLookupTable(table))
+  );
+  
+  for (const row of data) {
+    const resolvedRow = { ...row };
+    let hasErrors = false;
+    
+    // Resolve each foreign key in this row
+    for (const fk of tableInfo.foreignKeys) {
+      const originalValue = row[fk.column];
+      
+      if (originalValue != null && originalValue !== '') {
+        try {
+          const resolvedValue = await resolver.resolveForeignKey(
+            originalValue, 
+            fk.targetTable, 
+            fk.column
+          );
+          
+          if (resolvedValue) {
+            resolvedRow[fk.column] = resolvedValue;
+          } else {
+            console.warn(\`\u26a0\ufe0f  \${tableName}: Could not resolve FK \${fk.column}="\${originalValue}" -> \${fk.targetTable}\`);
+            
+            // Check if the column is nullable
+            const tableSchema = SCHEMA_CONFIG.tables.find(t => t.name === tableName);
+            const column = tableSchema?.columns.find(c => c.name === fk.column);
+            
+            if (column?.nullable) {
+              resolvedRow[fk.column] = null; // Set to null if nullable
+            } else {
+              hasErrors = true;
+              errors.push(\`Required FK \${fk.column}="\${originalValue}" could not be resolved\`);
+            }
+          }
+        } catch (error) {
+          console.error(\`\u274c \${tableName}: FK resolution error for \${fk.column}:\`, error.message);
+          hasErrors = true;
+          errors.push(\`FK resolution error: \${error.message}\`);
+        }
+      }
+    }
+    
+    if (!hasErrors) {
+      resolvedData.push(resolvedRow);
+    }
+  }
+  
+  if (errors.length > 0) {
+    console.warn(\`\u26a0\ufe0f  \${tableName}: \${errors.length} FK resolution errors (showing first 3):\`);
+    errors.slice(0, 3).forEach(error => console.warn(\`   - \${error}\`));
+  }
+  
+  console.log(\`\u2705 \${tableName}: FK resolution complete - \${resolvedData.length}/\${data.length} rows resolved\`);
+  
+  if (resolvedData.length > 0 && tableInfo.foreignKeys.length > 0) {
+    const sampleRow = resolvedData[0];
+    const fkSample = tableInfo.foreignKeys
+      .filter(fk => sampleRow[fk.column])
+      .map(fk => \`\${fk.column}=\${sampleRow[fk.column]}\`)
+      .slice(0, 2);
+    
+    if (fkSample.length > 0) {
+      console.log(\`\ud83d\udd0d \${tableName}: Sample resolved FKs: \${fkSample.join(', ')}\`);
+    }
+  }
+  
+  return resolvedData;
 };`,
 
     validationRules: `
+// Advanced Schema-Aware Validation
 const validateRowForTable = (row, tableName) => {
   const errors = [];
+  const warnings = [];
   
-  // Very permissive validation - only reject completely empty rows
   if (!row || typeof row !== 'object') {
     errors.push('Row is not a valid object');
-    return { isValid: false, errors };
+    return { isValid: false, errors, warnings };
   }
   
-  // Check if row has any actual data
-  // NOTE: Don't check for 'id' here since it's generated during mapping, not before validation
-  const dataKeys = Object.keys(row).filter(key => 
-    key && row[key] !== null && row[key] !== undefined && row[key] !== ''
+  const tableSchema = SCHEMA_CONFIG.tables.find(t => t.name === tableName);
+  const tableInfo = SCHEMA_CONFIG.tableAnalysis.find(t => t.name === tableName);
+  
+  if (!tableSchema || !tableInfo) {
+    warnings.push(\`Unknown table schema for \${tableName}\`);
+    return { isValid: true, errors, warnings }; // Allow unknown tables
+  }
+  
+  // Check required fields
+  const requiredColumns = tableSchema.columns.filter(col => 
+    !col.nullable && 
+    !col.defaultValue &&
+    !['id', 'created_at', 'updated_at'].includes(col.name)
   );
   
-  if (dataKeys.length === 0) {
-    errors.push('Row contains no data fields');
-    return { isValid: false, errors };
+  requiredColumns.forEach(col => {
+    const value = row[col.name];
+    if (value == null || value === '') {
+      errors.push(\`Required field '\${col.name}' is missing or empty\`);
+    }
+  });
+  
+  // Validate data types and constraints
+  Object.keys(row).forEach(fieldName => {
+    const column = tableSchema.columns.find(c => c.name === fieldName);
+    if (!column) return; // Skip unknown fields
+    
+    const value = row[fieldName];
+    if (value == null || value === '') return; // Skip empty values
+    
+    // Type-specific validation
+    try {
+      switch (column.type.toLowerCase()) {
+        case 'uuid':
+          if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{3}-[0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+            warnings.push(\`Field '\${fieldName}' should be a valid UUID format\`);
+          }
+          break;
+          
+        case 'smallint':
+          const smallInt = parseInt(value, 10);
+          if (isNaN(smallInt) || smallInt < -32768 || smallInt > 32767) {
+            errors.push(\`Field '\${fieldName}' must be a valid smallint (-32768 to 32767)\`);
+          }
+          break;
+          
+        case 'integer':
+          const int = parseInt(value, 10);
+          if (isNaN(int) || int < -2147483648 || int > 2147483647) {
+            errors.push(\`Field '\${fieldName}' must be a valid integer\`);
+          }
+          break;
+          
+        case 'varchar':
+          if (column.length && String(value).length > column.length) {
+            errors.push(\`Field '\${fieldName}' exceeds maximum length of \${column.length}\`);
+          }
+          break;
+          
+        case 'boolean':
+          const boolStr = String(value).toLowerCase();
+          if (!['true', 'false', '1', '0', 'yes', 'no', 'y', 'n', 'on', 'off'].includes(boolStr)) {
+            warnings.push(\`Field '\${fieldName}' may not be a valid boolean value\`);
+          }
+          break;
+          
+        case 'timestamp':
+        case 'timestamptz':
+        case 'date':
+          if (isNaN(new Date(value).getTime())) {
+            errors.push(\`Field '\${fieldName}' must be a valid date/timestamp\`);
+          }
+          break;
+          
+        case 'jsonb':
+        case 'json':
+          if (typeof value === 'string' && value.startsWith('{')) {
+            try {
+              JSON.parse(value);
+            } catch {
+              errors.push(\`Field '\${fieldName}' contains invalid JSON\`);
+            }
+          }
+          break;
+      }
+    } catch (error) {
+      warnings.push(\`Validation error for \${fieldName}: \${error.message}\`);
+    }
+  });
+  
+  // Check if row has meaningful data (beyond system fields)
+  const meaningfulFields = Object.keys(row).filter(key => 
+    !['id', 'created_at', 'updated_at'].includes(key) &&
+    row[key] != null && 
+    row[key] !== ''
+  );
+  
+  if (meaningfulFields.length === 0) {
+    errors.push('Row contains no meaningful data fields');
   }
   
-  // Row is valid if it has any non-empty data
-  return { isValid: true, errors: [] };
+  return { 
+    isValid: errors.length === 0, 
+    errors, 
+    warnings 
+  };
 };
 
 const validateBatch = (batch, tableName) => {
   const validRows = [];
   const invalidRows = [];
+  const allWarnings = [];
+  
+  console.log(\`\ud83d\udccb \${tableName}: Validating \${batch.length} rows...\`);
   
   batch.forEach((row, index) => {
     const validation = validateRowForTable(row, tableName);
+    
     if (validation.isValid) {
       validRows.push(row);
+      if (validation.warnings.length > 0) {
+        allWarnings.push(...validation.warnings.map(w => \`Row \${index}: \${w}\`));
+      }
     } else {
-      invalidRows.push({ row, errors: validation.errors, index });
-      console.error(\`❌ Validation failed for \${tableName} row (index: \${index}): \${validation.errors.join(', ')}\`);
+      invalidRows.push({ 
+        row, 
+        errors: validation.errors, 
+        warnings: validation.warnings,
+        index 
+      });
     }
   });
   
-  console.log(\`📊 \${tableName} validation: \${validRows.length} valid, \${invalidRows.length} invalid\`);
-  if (validRows.length > 0) {
-    console.log(\`🔍 \${tableName} sample valid row:\`, JSON.stringify(validRows[0], null, 2));
+  // Log validation summary
+  console.log(\`\ud83d\udcca \${tableName}: \${validRows.length} valid, \${invalidRows.length} invalid rows\`);
+  
+  if (allWarnings.length > 0 && allWarnings.length <= 10) {
+    console.log(\`\u26a0\ufe0f  \${tableName}: \${allWarnings.length} validation warnings:\`);
+    allWarnings.slice(0, 5).forEach(warning => console.warn(\`   - \${warning}\`));
+    if (allWarnings.length > 5) {
+      console.warn(\`   ... and \${allWarnings.length - 5} more warnings\`);
+    }
   }
   
-  return { validRows, invalidRows };
+  if (invalidRows.length > 0) {
+    console.error(\`\u274c \${tableName}: \${invalidRows.length} validation errors (showing first 3):\`);
+    invalidRows.slice(0, 3).forEach(invalid => {
+      console.error(\`   Row \${invalid.index}: \${invalid.errors.join(', ')}\`);
+    });
+  }
+  
+  if (validRows.length > 0) {
+    const sampleRow = validRows[0];
+    const sampleFields = Object.keys(sampleRow)
+      .filter(key => !['id', 'created_at', 'updated_at'].includes(key))
+      .slice(0, 3);
+    
+    if (sampleFields.length > 0) {
+      console.log(\`\ud83d\udd0d \${tableName}: Sample valid row fields: \${sampleFields.join(', ')}\`);
+    }
+  }
+  
+  return { 
+    validRows, 
+    invalidRows: invalidRows.map(invalid => ({
+      ...invalid.row,
+      _validationErrors: invalid.errors,
+      _validationWarnings: invalid.warnings
+    }))
+  };
 };`,
   };
 }
