@@ -478,18 +478,23 @@ const calculateSemanticSimilarity = (tableName, csvHeader) => {
     score += 10; // Exact match
   }
   
-  // DIRECT SEMANTIC MATCHES - High priority
+  // DIRECT SEMANTIC MATCHES - High priority with more specific mappings
   const semanticMappings = {
-    'builders': ['builder', 'contractors', 'developer', 'construction'],
-    'business_names': ['business', 'company', 'firm', 'corp', 'organization'],
-    'jurisdictions': ['jurisdiction', 'state', 'county', 'city', 'municipality', 'district'],
-    'sales': ['sale', 'sold', 'transaction', 'purchase'],
-    'permit_types': ['permit', 'license', 'approval', 'authorization'],
-    'project_types': ['project', 'development', 'construction', 'building'],
-    'statuses': ['status', 'state', 'condition', 'phase'],
-    'categories': ['category', 'type', 'class', 'classification'],
-    'zones': ['zone', 'zoning', 'district', 'area'],
-    'departments': ['department', 'agency', 'office', 'bureau']
+    'builders': ['builder', 'builders', 'contractor', 'developer', 'construction_company'],
+    'business_names': ['business_name', 'business', 'company', 'firm', 'corp', 'organization', 'contractor'],
+    'jurisdictions': ['permit_jurisdiction', 'jurisdiction', 'county', 'city', 'municipality', 'district'],
+    'permit_types': ['type', 'permit_type'],  // When table is permit_types, 'type' should match
+    'permit_subtypes': ['subtype', 'permit_subtype'], // When table is permit_subtypes, 'subtype' should match  
+    'permit_statuses': ['status', 'initial_status', 'latest_status', 'permit_status'],
+    'project_types': ['project_type'], // When table is project_types, 'project_type' should match
+    'loan_types': ['loantype', 'loan_type'],
+    'transaction_types': ['transactiontype', 'transaction_type'],
+    'product_classes': ['productclass', 'product_class'],
+    'product_types': ['producttype', 'product_type'],
+    
+    // NEW: Special mappings for permits table - it should NOT directly match lookup columns
+    // Instead, permits table will map these via foreign keys during column mapping
+    'permits': ['permit', 'permit_number', 'permit_id']
   };
   
   // Check if this table has specific semantic mappings
@@ -544,6 +549,27 @@ const calculateSemanticSimilarity = (tableName, csvHeader) => {
   }
   
   return score;
+};
+
+// NEW: Find CSV column that should be mapped to a foreign key via lookup table
+const findForeignKeySourceColumn = (lookupTableName, csvHeaders) => {
+  // Use the existing semantic matching logic to find the best CSV column
+  // for the lookup table, which becomes the source for the foreign key
+  const matches = [];
+  
+  csvHeaders.forEach(header => {
+    const score = calculateSemanticSimilarity(lookupTableName, header);
+    if (score > 0) {
+      matches.push({ header, score });
+    }
+  });
+  
+  // Sort by score and return the best match if above threshold
+  const sortedMatches = matches
+    .sort((a, b) => b.score - a.score)
+    .filter(match => match.score >= 0.3);
+    
+  return sortedMatches.length > 0 ? sortedMatches[0].header : null;
 };
 
 const filterDataForDataTable = (data, tableInfo) => {
@@ -674,15 +700,40 @@ const mapCSVToTableColumns = (csvRow, tableName) => {
         const column = tableSchema.columns.find(c => c.name === targetCol);
         if (!column) return;
         
-        // Find best matching CSV header
-        const bestCsvHeader = findBestColumnMatch(targetCol, csvHeaders, tableInfo.type);
+        let bestCsvHeader = null;
+        let isFromForeignKeyMapping = false;
+        
+        // SPECIAL HANDLING for foreign key columns (ending in _id)
+        if (targetCol.endsWith('_id') && tableInfo.type === 'data') {
+          const lookupTableName = targetCol.replace('_id', 's'); // business_name_id -> business_names
+          bestCsvHeader = findForeignKeySourceColumn(lookupTableName, csvHeaders);
+          isFromForeignKeyMapping = !!bestCsvHeader;
+          
+          if (bestCsvHeader) {
+            console.log(\`🔗 \${tableName}: Foreign key mapping: "\${bestCsvHeader}" → \${targetCol} (via \${lookupTableName})\`);
+          }
+        }
+        
+        // If no foreign key mapping found, use regular column matching
+        if (!bestCsvHeader) {
+          bestCsvHeader = findBestColumnMatch(targetCol, csvHeaders, tableInfo.type);
+        }
         
         if (bestCsvHeader && csvRow[bestCsvHeader] != null && csvRow[bestCsvHeader] !== '') {
           try {
-            const convertedValue = convertValue(csvRow[bestCsvHeader], column);
+            let convertedValue;
+            
+            if (isFromForeignKeyMapping) {
+              // For foreign keys, store the original value - it will be resolved later
+              convertedValue = String(csvRow[bestCsvHeader]).trim();
+              console.log(\`🔑 \${tableName}: Storing FK reference value: \${convertedValue} for \${targetCol}\`);
+            } else {
+              convertedValue = convertValue(csvRow[bestCsvHeader], column);
+            }
+            
             if (convertedValue !== null && convertedValue !== undefined) {
               mapped[targetCol] = convertedValue;
-              mappedFields.push(\`"\${bestCsvHeader}" → \${targetCol} (\${column.type})\`);
+              mappedFields.push(\`"\${bestCsvHeader}" → \${targetCol} (\${column.type})\${isFromForeignKeyMapping ? ' [FK]' : ''}\`);
             }
           } catch (error) {
             conversionErrors.push(\`\${targetCol}: \${error.message}\`);
