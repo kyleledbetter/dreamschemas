@@ -1,6 +1,6 @@
 "use client";
 
-import { Github, Mail, Twitter } from "lucide-react";
+import { Github, Twitter } from "lucide-react";
 import Link from "next/link";
 import { LogoIcon } from "../ui/icons";
 
@@ -34,11 +34,10 @@ const footerLinks = {
 const socialLinks = [
   {
     name: "GitHub",
-    href: "https://github.com/dreamschemas/dreamschemas",
+    href: "https://github.com/kyleledbetter/dreamschemas",
     icon: Github,
   },
-  { name: "Twitter", href: "https://twitter.com/dreamschemas", icon: Twitter },
-  { name: "Email", href: "mailto:hello@dreamschemas.com", icon: Mail },
+  { name: "Twitter", href: "https://x.com/askdreamai", icon: Twitter },
 ];
 
 export function Footer() {

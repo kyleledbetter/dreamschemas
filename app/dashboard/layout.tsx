@@ -5,13 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { LogoIcon } from "@/components/ui/icons";
 import { hasEnvVars } from "@/lib/utils";
-import {
-  Database,
-  Github,
-  MessageCircle,
-  Sparkles,
-  Twitter,
-} from "lucide-react";
+import { Database, Github, Sparkles, Twitter } from "lucide-react";
 import Link from "next/link";
 
 export default function DashboardLayout({
@@ -147,7 +141,7 @@ export default function DashboardLayout({
               <h4 className="font-semibold">Community</h4>
               <div className="space-y-2 text-sm">
                 <a
-                  href="https://github.com/dreamschemas/dreamschemas"
+                  href="https://github.com/kyleledbetter/dreamschemas"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-2 text-muted-foreground hover:text-foreground"
@@ -156,7 +150,7 @@ export default function DashboardLayout({
                   GitHub
                 </a>
                 <a
-                  href="https://twitter.com/dreamschemas"
+                  href="https://x.com/askdreamai"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-2 text-muted-foreground hover:text-foreground"
@@ -164,13 +158,6 @@ export default function DashboardLayout({
                   <Twitter className="h-4 w-4" />
                   Twitter
                 </a>
-                <Link
-                  href="/discord"
-                  className="flex items-center gap-2 text-muted-foreground hover:text-foreground"
-                >
-                  <MessageCircle className="h-4 w-4" />
-                  Discord
-                </Link>
               </div>
             </div>
           </div>

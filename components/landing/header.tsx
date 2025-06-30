@@ -20,7 +20,7 @@ export function Header() {
     { href: "#demo", label: "Demo" },
     { href: "#how-it-works", label: "How it Works" },
     { href: "/docs", label: "Docs" },
-    { href: "https://github.com/dreamschemas/dreamschemas", label: "GitHub" },
+    { href: "https://github.com/kyleledbetter/dreamschemas", label: "GitHub" },
   ];
 
   return (
