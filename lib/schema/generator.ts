@@ -394,21 +394,106 @@ export class SchemaGenerator {
   }
 
   /**
-   * Generate RLS policies for security
+   * Generate RLS policies for security (backward compatibility)
    */
   private generateRLSPolicies(tables: Table[]): RLSPolicy[] {
     const policies: RLSPolicy[] = [];
 
     for (const table of tables) {
-      // Basic RLS policy for authenticated users
-      policies.push({
-        id: uuidv4(),
-        tableName: table.name,
-        name: `${table.name}_policy`,
-        command: 'ALL',
-        using: 'auth.uid() IS NOT NULL',
-        roles: ['authenticated'],
-      });
+      const tableName = table.name;
+      
+      // Analyze table structure for appropriate policies
+      const hasUserIdColumn = table.columns.some(col => 
+        col.name === 'user_id' && col.type === 'UUID'
+      );
+      
+      const hasOwnerIdColumn = table.columns.some(col => 
+        col.name === 'owner_id' && col.type === 'UUID'
+      );
+      
+      const isPublicTable = table.name.includes('public_') || 
+        table.name.includes('category') || 
+        table.name.includes('type') ||
+        table.columns.length <= 5; // Simple lookup tables
+      
+      const isAuditTable = table.name.includes('audit') || 
+        table.name.includes('log') ||
+        table.name.includes('history');
+
+      // Determine policy patterns
+      let selectPolicy: string;
+      let insertPolicy: string;
+      let updatePolicy: string;
+      let deletePolicy: string;
+
+      if (isPublicTable) {
+        // Public/lookup tables - read for all, admin-only write
+        selectPolicy = 'true';
+        insertPolicy = "auth.jwt() ->> 'role' = 'admin'";
+        updatePolicy = "auth.jwt() ->> 'role' = 'admin'";
+        deletePolicy = "auth.jwt() ->> 'role' = 'admin'";
+      } else if (isAuditTable) {
+        // Audit tables - read own, insert only, no update/delete
+        selectPolicy = hasUserIdColumn ? 'auth.uid() = user_id' : 'auth.uid() IS NOT NULL';
+        insertPolicy = 'auth.uid() IS NOT NULL';
+        updatePolicy = 'false'; // Never allow updates to audit logs
+        deletePolicy = 'false'; // Never allow deletes of audit logs
+      } else if (hasUserIdColumn) {
+        // User-owned data
+        selectPolicy = 'auth.uid() = user_id';
+        insertPolicy = 'auth.uid() = user_id';
+        updatePolicy = 'auth.uid() = user_id';
+        deletePolicy = 'auth.uid() = user_id';
+      } else if (hasOwnerIdColumn) {
+        // Owner-based access
+        selectPolicy = 'auth.uid() = owner_id';
+        insertPolicy = 'auth.uid() = owner_id';
+        updatePolicy = 'auth.uid() = owner_id';
+        deletePolicy = 'auth.uid() = owner_id';
+      } else {
+        // Default authenticated access
+        selectPolicy = 'auth.uid() IS NOT NULL';
+        insertPolicy = 'auth.uid() IS NOT NULL';
+        updatePolicy = 'auth.uid() IS NOT NULL';
+        deletePolicy = 'auth.uid() IS NOT NULL';
+      }
+
+      // Generate the 4 policies
+      policies.push(
+        {
+          id: uuidv4(),
+          tableName,
+          name: `${tableName}_select_policy`,
+          command: 'SELECT',
+          using: selectPolicy,
+          roles: isPublicTable ? ['anon', 'authenticated'] : ['authenticated'],
+        },
+        {
+          id: uuidv4(),
+          tableName,
+          name: `${tableName}_insert_policy`,
+          command: 'INSERT',
+          withCheck: insertPolicy,
+          roles: ['authenticated'],
+        },
+        {
+          id: uuidv4(),
+          tableName,
+          name: `${tableName}_update_policy`,
+          command: 'UPDATE',
+          using: updatePolicy,
+          withCheck: updatePolicy,
+          roles: ['authenticated'],
+        },
+        {
+          id: uuidv4(),
+          tableName,
+          name: `${tableName}_delete_policy`,
+          command: 'DELETE',
+          using: deletePolicy,
+          roles: ['authenticated'],
+        }
+      );
     }
 
     return policies;

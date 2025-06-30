@@ -78,7 +78,8 @@ export {
   mapCSVToTableColumns,
   resolveForeignKeys,
   validateBatch,
-  SCHEMA_CONFIG
+  SCHEMA_CONFIG,
+  SESSION_FK_CACHE
 };
 
 class DynamicCSVProcessor {
@@ -91,8 +92,8 @@ class DynamicCSVProcessor {
   private serviceKey: string;
 
   // Processing constants from schema config - use fallback if SCHEMA_CONFIG not available
-  private static readonly CHUNK_SIZE = (typeof SCHEMA_CONFIG !== 'undefined' ? SCHEMA_CONFIG.batchSize : null) || 100;
-  private static readonly MAX_CPU_TIME = (typeof SCHEMA_CONFIG !== 'undefined' ? SCHEMA_CONFIG.timeoutMs : null) || 1400;
+  private static readonly CHUNK_SIZE = (typeof SCHEMA_CONFIG !== 'undefined' ? SCHEMA_CONFIG.batchSize : null) || 50;
+  private static readonly MAX_CPU_TIME = (typeof SCHEMA_CONFIG !== 'undefined' ? SCHEMA_CONFIG.timeoutMs : null) || 1200;
   
   // Dynamic caches for FK resolution
   private fkResolver: any; // Use any type to avoid dependency issues
@@ -163,10 +164,12 @@ class DynamicCSVProcessor {
       }
 
     } catch (error) {
-      console.error('Processing error:', error);
+      console.error('❌ FATAL Processing error:', error);
+      console.error('❌ Error stack:', error.stack);
       this.progress.status = "failed";
       this.errors.push({
         message: error.message,
+        stack: error.stack,
         timestamp: new Date(),
       });
       this.progress.errors = this.errors;
@@ -177,113 +180,170 @@ class DynamicCSVProcessor {
   private async processOneChunkWithContinuation(onProgress: (progress: SeedingProgress) => void): Promise<SeedingProgress> {
     console.log('📋 DYNAMIC CHUNK MODE: Processing one chunk per invocation');
     
-    // Get CSV data
-    this.updateProgress(10, "parsing", "Downloading CSV...");
-    onProgress(this.progress);
-    
-    const csvContent = await this.getCSVContentFromStorage();
-    const lines = csvContent.split('\\n').filter(line => line.trim());
-    
-    if (lines.length <= 1) {
+    try {
+      // Get CSV data
+      this.updateProgress(10, "parsing", "Downloading CSV...");
+      onProgress(this.progress);
+      
+      const csvContent = await this.getCSVContentFromStorage();
+      const lines = csvContent.split('\\n').filter(line => line.trim());
+      
+      if (lines.length <= 1) {
+        this.progress.status = "completed";
+        this.progress.overallProgress = 100;
+        this.updateProgress(100, "completing", "No data to process");
+        onProgress(this.progress);
+        return this.progress;
+      }
+
+      // Parse headers with better CSV parsing
+      this.updateProgress(15, "parsing", "Parsing CSV structure...");
+      onProgress(this.progress);
+      
+      const headers = this.parseCSVLine(lines[0]);
+      const dataLines = lines.slice(1);
+      const totalRows = dataLines.length;
+      
+      console.log(\`📊 Total rows to process: \${totalRows}\`);
+      console.log(\`📋 CSV Headers (\${headers.length}): \${headers.slice(0, 10).join(', ')}\${headers.length > 10 ? '...' : ''}\`);
+
+      // Process chunk using dynamic table processing order
+      const processedRows = this.request.processedRows || 0;
+      const chunkSize = DynamicCSVProcessor.CHUNK_SIZE;
+      const startIdx = processedRows;
+      const endIdx = Math.min(startIdx + chunkSize, totalRows);
+      
+      if (startIdx >= totalRows) {
+        this.progress.status = "completed";
+        this.progress.overallProgress = 100;
+        this.updateProgress(100, "completing", "All data processed");
+        onProgress(this.progress);
+        return this.progress;
+      }
+      
+      const chunkLines = dataLines.slice(startIdx, endIdx);
+      let newProcessedRows = processedRows;
+      
+      if (chunkLines.length > 0) {
+        // Parse chunk data with better CSV parsing
+        const chunkData = chunkLines.map((line, index) => {
+          try {
+            const values = this.parseCSVLine(line);
+            const row: any = {};
+            headers.forEach((header, headerIndex) => {
+              row[header] = values[headerIndex] || '';
+            });
+            return row;
+          } catch (error) {
+            console.warn(\`⚠️ Failed to parse CSV line \${startIdx + index + 1}: \${error.message}\`);
+            return null;
+          }
+        }).filter(row => row !== null);
+
+        console.log(\`📦 Processing chunk: rows \${startIdx + 1}-\${endIdx} of \${totalRows}\`);
+
+        const progressPercent = Math.min(95, 25 + ((startIdx + chunkData.length) / totalRows) * 70);
+        this.updateProgress(
+          progressPercent,
+          "processing",
+          \`Processing rows \${startIdx + 1}-\${endIdx} of \${totalRows} (\${Math.round(progressPercent)}%)\`
+        );
+        onProgress(this.progress);
+
+        // Process chunk data with timeout protection using dynamic logic
+        await this.processChunkDataWithDynamicLogic(chunkData);
+
+        newProcessedRows = processedRows + chunkLines.length;
+        this.progress.processedRows = newProcessedRows;
+        this.progress.successfulRows = Math.max(this.progress.successfulRows, newProcessedRows);
+
+        console.log(\`✅ Completed chunk, total processed: \${newProcessedRows}/\${totalRows}\`);
+      }
+      
+      // Check if we need continuation
+      if (newProcessedRows < totalRows) {
+        console.log(\`🔄 Need continuation: \${newProcessedRows}/\${totalRows} completed\`);
+        this.progress.status = "processing";
+        this.progress.needsContinuation = true;
+        this.progress.continuationData = {
+          processedRows: newProcessedRows,
+          totalRows: totalRows,
+          nextChunkIndex: Math.ceil(newProcessedRows / chunkSize),
+        };
+        
+        const continuationPercent = Math.min(95, (newProcessedRows / totalRows) * 95);
+        this.updateProgress(
+          continuationPercent,
+          "processing",
+          \`Chunk complete: \${newProcessedRows}/\${totalRows} rows (\${Math.round(continuationPercent)}%)\`
+        );
+        onProgress(this.progress);
+        
+        // Schedule next chunk
+        this.scheduleNextChunk(newProcessedRows, totalRows, chunkSize);
+        
+        return this.progress;
+      }
+
+      // All done
+      console.log(\`🎉 ALL DATA PROCESSED: \${newProcessedRows}/\${totalRows} rows\`);
       this.progress.status = "completed";
       this.progress.overallProgress = 100;
-      this.updateProgress(100, "completing", "No data to process");
+      this.progress.needsContinuation = false;
+      this.updateProgress(100, "completing", "Data seeding completed successfully");
       onProgress(this.progress);
+      
       return this.progress;
-    }
-
-    // Parse headers
-    this.updateProgress(15, "parsing", "Parsing CSV structure...");
-    onProgress(this.progress);
-    
-    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
-    const dataLines = lines.slice(1);
-    const totalRows = dataLines.length;
-    
-    console.log(\`📊 Total rows to process: \${totalRows}\`);
-
-    // Process chunk using dynamic table processing order
-    const processedRows = this.request.processedRows || 0;
-    const chunkSize = DynamicCSVProcessor.CHUNK_SIZE;
-    const startIdx = processedRows;
-    const endIdx = Math.min(startIdx + chunkSize, totalRows);
-    
-    if (startIdx >= totalRows) {
-      this.progress.status = "completed";
-      this.progress.overallProgress = 100;
-      this.updateProgress(100, "completing", "All data processed");
-      onProgress(this.progress);
-      return this.progress;
-    }
-    
-    const chunkLines = dataLines.slice(startIdx, endIdx);
-    let newProcessedRows = processedRows;
-    
-    if (chunkLines.length > 0) {
-      // Parse chunk data
-      const chunkData = chunkLines.map(line => {
-        const values = line.split(',').map(v => v.trim().replace(/"/g, ''));
-        const row: any = {};
-        headers.forEach((header, index) => {
-          row[header] = values[index] || '';
-        });
-        return row;
+      
+    } catch (error) {
+      console.error('❌ Error in processOneChunkWithContinuation:', error);
+      this.progress.status = "failed";
+      this.errors.push({
+        message: error.message,
+        stack: error.stack,
+        timestamp: new Date(),
       });
-
-      console.log(\`📦 Processing chunk: rows \${startIdx + 1}-\${endIdx} of \${totalRows}\`);
-
-      const progressPercent = Math.min(95, 25 + ((startIdx + chunkLines.length) / totalRows) * 70);
-      this.updateProgress(
-        progressPercent,
-        "processing",
-        \`Processing rows \${startIdx + 1}-\${endIdx} of \${totalRows} (\${Math.round(progressPercent)}%)\`
-      );
+      this.progress.errors = this.errors;
       onProgress(this.progress);
+      throw error;
+    }
+  }
 
-      // Process chunk data with timeout protection using dynamic logic
-      await this.processChunkDataWithDynamicLogic(chunkData);
-
-      newProcessedRows = processedRows + chunkLines.length;
-      this.progress.processedRows = newProcessedRows;
-      this.progress.successfulRows = Math.max(this.progress.successfulRows, newProcessedRows);
-
-      console.log(\`✅ Completed chunk, total processed: \${newProcessedRows}/\${totalRows}\`);
+  // Enhanced CSV parsing to handle quoted fields and commas within quotes
+  private parseCSVLine(line: string): string[] {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    let i = 0;
+    
+    while (i < line.length) {
+      const char = line[i];
+      
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          // Escaped quote
+          current += '"';
+          i += 2;
+        } else {
+          // Toggle quote state
+          inQuotes = !inQuotes;
+          i++;
+        }
+      } else if (char === ',' && !inQuotes) {
+        // Field separator
+        result.push(current.trim());
+        current = '';
+        i++;
+      } else {
+        current += char;
+        i++;
+      }
     }
     
-    // Check if we need continuation
-    if (newProcessedRows < totalRows) {
-      console.log(\`🔄 Need continuation: \${newProcessedRows}/\${totalRows} completed\`);
-      this.progress.status = "processing";
-      this.progress.needsContinuation = true;
-      this.progress.continuationData = {
-        processedRows: newProcessedRows,
-        totalRows: totalRows,
-        nextChunkIndex: Math.ceil(newProcessedRows / chunkSize),
-      };
-      
-      const continuationPercent = Math.min(95, (newProcessedRows / totalRows) * 95);
-      this.updateProgress(
-        continuationPercent,
-        "processing",
-        \`Chunk complete: \${newProcessedRows}/\${totalRows} rows (\${Math.round(continuationPercent)}%)\`
-      );
-      onProgress(this.progress);
-      
-      // Schedule next chunk
-      this.scheduleNextChunk(newProcessedRows, totalRows, chunkSize);
-      
-      return this.progress;
-    }
-
-    // All done
-    console.log(\`🎉 ALL DATA PROCESSED: \${newProcessedRows}/\${totalRows} rows\`);
-    this.progress.status = "completed";
-    this.progress.overallProgress = 100;
-    this.progress.needsContinuation = false;
-    this.updateProgress(100, "completing", "Data seeding completed successfully");
-    onProgress(this.progress);
+    // Add the last field
+    result.push(current.trim());
     
-    return this.progress;
+    return result;
   }
 
   private async processChunkDataWithDynamicLogic(chunkData: any[]): Promise<void> {
@@ -291,156 +351,238 @@ class DynamicCSVProcessor {
     
     const startTime = Date.now();
     
-    // Safely get table processing order with fallback
-    const tableOrder = typeof TABLE_PROCESSING_ORDER !== 'undefined' ? TABLE_PROCESSING_ORDER : ['properties', 'users', 'categories'];
-    
-    console.log(\`🚀 Processing \${tableOrder.length} tables in order: \${tableOrder.join(' → ')}\`);
-    
-    // Process each table using the AI-generated order
-    for (const tableName of tableOrder) {
-      // Check CPU time before processing each table
-      const elapsedTime = Date.now() - startTime;
-      if (elapsedTime > DynamicCSVProcessor.MAX_CPU_TIME) {
-        console.log(\`⏰ CPU timeout reached (\${elapsedTime}ms), stopping table processing\`);
-        break;
-      }
+    try {
+      // Safely get table processing order with fallback
+      const tableOrder = typeof TABLE_PROCESSING_ORDER !== 'undefined' ? TABLE_PROCESSING_ORDER : ['properties', 'permits', 'sales', 'property_assessments'];
       
-      console.log(\`📋 Processing table: \${tableName} (CPU time: \${elapsedTime}ms)\`);
+      console.log(\`🚀 Processing \${tableOrder.length} tables in order: \${tableOrder.join(' → ')}\`);
       
-      try {
-        // Use AI-generated filtering logic
-        const relevantData = filterDataForTable(chunkData, tableName);
-        
-        if (relevantData.length === 0) {
-          console.log(\`⏭️ No data for \${tableName}, skipping\`);
-          continue;
+      // Process each table using the AI-generated order
+      for (const tableName of tableOrder) {
+        // Check CPU time before processing each table
+        const elapsedTime = Date.now() - startTime;
+        if (elapsedTime > DynamicCSVProcessor.MAX_CPU_TIME) {
+          console.log(\`⏰ CPU timeout reached (\${elapsedTime}ms), stopping table processing\`);
+          break;
         }
         
-        console.log(\`📊 \${tableName}: \${relevantData.length} rows to process\`);
-        
-        // Apply AI-generated validation
-        const { validRows, invalidRows } = validateBatch(relevantData, tableName);
-        
-        if (invalidRows.length > 0) {
-          console.log(\`⚠️ \${tableName}: \${invalidRows.length} invalid rows found\`);
-          this.warnings.push(...invalidRows);
-        }
-        
-        if (validRows.length === 0) {
-          console.log(\`⏭️ No valid rows for \${tableName}, skipping\`);
-          continue;
-        }
-        
-        // Map data using AI-generated column mappers
-        const mappedData = validRows.map(row => mapCSVToTableColumns(row, tableName))
-          .filter(row => row !== null); // Filter out failed mappings
-        
-        if (mappedData.length === 0) {
-          console.log(\`⏭️ No valid mapped data for \${tableName}, skipping\`);
-          continue;
-        }
-        
-        // Resolve foreign keys using AI-generated resolvers
-        const resolvedData = await resolveForeignKeys(mappedData, tableName, this.supabaseClient);
-        
-        // Insert the data
-        console.log(\`💾 Inserting \${resolvedData.length} rows into \${tableName}\`);
-        
-        // Prepare data for insertion - remove client-generated IDs to let PostgreSQL generate them
-        const insertData = resolvedData.map(row => {
-          const { id, ...rowWithoutId } = row;
-          return rowWithoutId; // Let PostgreSQL generate UUID with uuid_generate_v4()
-        });
-        
-        // Log sample data for debugging
-        if (insertData.length > 0) {
-          console.log(\`🔍 Sample row for \${tableName}:\`, Object.keys(insertData[0]).slice(0, 5).join(', '), '...');
-        }
+        console.log(\`📋 Processing table: \${tableName} (CPU time: \${elapsedTime}ms)\`);
         
         try {
-          const { data, error } = await this.supabaseClient
-            .from(tableName)
-            .insert(insertData) // Use insert instead of upsert since we're not providing IDs
-            .select();
-            
-          if (error) {
-            console.log(\`❌ \${tableName} insert error:\`, error.message);
-            console.log(\`🔍 Error details:\`, JSON.stringify(error, null, 2));
-            
-            // Check if it's an RLS issue
-            if (error.message.includes('owner') || error.message.includes('permission')) {
-              console.log(\`⚠️  This looks like a Row Level Security (RLS) issue. The table \${tableName} may have RLS enabled without proper policies for the service role.\`);
+          // Use AI-generated filtering logic
+          const relevantData = filterDataForTable(chunkData, tableName);
+          
+          if (relevantData.length === 0) {
+            console.log(\`⏭️ No data for \${tableName}, skipping\`);
+            continue;
+          }
+          
+          console.log(\`📊 \${tableName}: \${relevantData.length} rows to process\`);
+          
+          // Apply AI-generated validation
+          const { validRows, invalidRows } = validateBatch(relevantData, tableName);
+          
+          if (invalidRows.length > 0) {
+            console.log(\`⚠️ \${tableName}: \${invalidRows.length} invalid rows found\`);
+            this.warnings.push(...invalidRows);
+          }
+          
+          if (validRows.length === 0) {
+            console.log(\`⏭️ No valid rows for \${tableName}, skipping\`);
+            continue;
+          }
+          
+          // Map data using AI-generated column mappers
+          const mappedData = validRows.map(row => {
+            try {
+              return mapCSVToTableColumns(row, tableName);
+            } catch (error) {
+              console.warn(\`⚠️ Mapping failed for row in \${tableName}: \${error.message}\`);
+              return null;
             }
-            
-            // Check if it's a column issue
-            if (error.message.includes('column') || error.message.includes('schema cache')) {
-              console.log(\`⚠️  This looks like a column schema issue. The mapped columns may not match the actual table schema.\`);
+          }).filter(row => row !== null && typeof row === 'object'); // Filter out failed mappings and ensure valid objects
+          
+          if (mappedData.length === 0) {
+            console.log(\`⏭️ No valid mapped data for \${tableName}, skipping\`);
+            continue;
+          }
+          
+          // Resolve foreign keys using AI-generated resolvers
+          let resolvedData;
+          try {
+            resolvedData = await resolveForeignKeys(mappedData, tableName, this.supabaseClient);
+            // Additional safety check for FK resolution results
+            if (!Array.isArray(resolvedData)) {
+              console.warn(\`⚠️ FK resolution returned non-array for \${tableName}, using original data\`);
+              resolvedData = mappedData;
             }
-            
+          } catch (error) {
+            console.warn(\`⚠️ FK resolution failed for \${tableName}: \${error.message}\`);
+            resolvedData = mappedData; // Fall back to mapped data without FK resolution
+          }
+          
+          // Additional null check and filtering for resolved data
+          const validResolvedData = resolvedData.filter(row => row !== null && typeof row === 'object');
+          
+          if (validResolvedData.length === 0) {
+            console.log(\`⏭️ No valid resolved data for \${tableName}, skipping\`);
+            continue;
+          }
+          
+          // Insert the data
+          console.log(\`💾 Inserting \${validResolvedData.length} rows into \${tableName}\`);
+          
+          // Prepare data for insertion - remove client-generated IDs to let PostgreSQL generate them
+          const insertData = validResolvedData.map(row => {
+            try {
+              // Safety check before destructuring
+              if (!row || typeof row !== 'object') {
+                console.warn(\`⚠️ Invalid row data in \${tableName}, skipping\`);
+                return null;
+              }
+              const { id, _addressKey, ...rowWithoutId } = row; // Also remove _addressKey used for FK resolution
+              return rowWithoutId; // Let PostgreSQL generate UUID with uuid_generate_v4()
+            } catch (error) {
+              console.warn(\`⚠️ Error preparing row for insertion in \${tableName}: \${error.message}\`);
+              return null;
+            }
+                     }).filter(row => row !== null); // Remove any failed preparations
+          
+          // Final safety check - ensure we have valid data to insert
+          if (insertData.length === 0) {
+            console.log(\`⏭️ No valid insert data prepared for \${tableName}, skipping\`);
+            continue;
+          }
+          
+          // Log sample data for debugging
+          if (insertData.length > 0) {
+            console.log(\`🔍 Sample row for \${tableName}:\`, Object.keys(insertData[0]).slice(0, 5).join(', '), '...');
+            console.log(\`🔍 Sample values:\`, Object.values(insertData[0]).slice(0, 3).map(v => String(v).substring(0, 20)).join(', '), '...');
+          }
+          
+          try {
+            const { data, error } = await this.supabaseClient
+              .from(tableName)
+              .insert(insertData) // Use insert instead of upsert since we're not providing IDs
+              .select();
+              
+            if (error) {
+              console.log(\`❌ \${tableName} insert error:\`, error.message);
+              console.log(\`🔍 Error details:\`, JSON.stringify(error, null, 2));
+              
+              // Enhanced error analysis
+              if (error.message.includes('owner') || error.message.includes('permission') || error.message.includes('policy')) {
+                console.log(\`⚠️  This looks like a Row Level Security (RLS) issue. The table \${tableName} may have RLS enabled without proper policies for the service role.\`);
+              }
+              
+              if (error.message.includes('column') || error.message.includes('schema cache') || error.message.includes('does not exist')) {
+                console.log(\`⚠️  This looks like a column schema issue. The mapped columns may not match the actual table schema.\`);
+                console.log(\`🔍 Available columns in insert data:\`, Object.keys(insertData[0] || {}).join(', '));
+              }
+              
+              if (error.message.includes('violates') || error.message.includes('constraint')) {
+                console.log(\`⚠️  This looks like a constraint violation. Check foreign key references and data types.\`);
+              }
+              
+              this.errors.push({
+                table: tableName,
+                error: error.message,
+                errorCode: error.code,
+                errorDetails: error.details,
+                timestamp: new Date(),
+              });
+            } else {
+              console.log(\`✅ \${tableName}: Successfully inserted \${insertData.length} rows\`);
+              if (data) {
+                console.log(\`📊 \${tableName}: Confirmed \${data.length} rows in database\`);
+                
+                // Store inserted records in session cache for FK resolution
+                try {
+                  if (typeof SESSION_FK_CACHE !== 'undefined' && SESSION_FK_CACHE.storeInsertedRecords) {
+                    SESSION_FK_CACHE.storeInsertedRecords(tableName, data);
+                  }
+                } catch (cacheError) {
+                  console.warn(\`⚠️  Failed to cache \${tableName} records for FK resolution:\`, cacheError.message);
+                }
+              }
+              this.progress.successfulRows += insertData.length;
+            }
+          } catch (e) {
+            console.log(\`❌ \${tableName} INSERTION CRASH:\`, e ? e.message : 'Unknown error');
+            console.log(\`🔍 Raw error:\`, e);
+            console.log(\`🔍 Data sample that caused crash:\`, JSON.stringify(insertData.slice(0, 2), null, 2));
             this.errors.push({
               table: tableName,
-              error: error.message,
+              error: e ? e.message : 'Unknown insertion crash',
+              errorType: 'insertion_crash',
               timestamp: new Date(),
             });
-          } else {
-            console.log(\`✅ \${tableName}: Successfully inserted \${resolvedData.length} rows\`);
-            if (data) {
-              console.log(\`📊 \${tableName}: Confirmed \${data.length} rows in database\`);
-            }
-            this.progress.successfulRows += resolvedData.length;
           }
-        } catch (e) {
-          console.log(\`❌ \${tableName} INSERTION CRASH:\`, e ? e.message : 'Unknown error');
-          console.log(\`🔍 Raw error:\`, e);
-          console.log(\`🔍 Data sample that caused crash:\`, JSON.stringify(resolvedData.slice(0, 2), null, 2));
+          
+        } catch (error) {
+          console.log(\`❌ Error processing \${tableName}:\`, error.message);
+          console.log(\`🔍 Error stack:\`, error.stack);
           this.errors.push({
             table: tableName,
-            error: e ? e.message : 'Unknown insertion crash',
+            error: error.message,
+            errorType: 'processing_error',
             timestamp: new Date(),
           });
         }
-        
-      } catch (error) {
-        console.log(\`❌ Error processing \${tableName}:\`, error.message);
       }
+    } catch (error) {
+      console.error('❌ Fatal error in processChunkDataWithDynamicLogic:', error);
+      throw error;
     }
   }
 
   private async processSingleChunk(): Promise<SeedingProgress> {
     console.log('🔄 CHUNK MODE: Processing chunk', this.request.chunkIndex || 0);
     
-    // Get the chunk of data to process
-    const chunkData = await this.getCSVChunk();
-    
-    if (!chunkData || chunkData.length === 0) {
-      this.progress.status = "completed";
-      this.progress.overallProgress = 100;
-      this.updateProgress(100, "completing", "Seeding completed successfully");
+    try {
+      // Get the chunk of data to process
+      const chunkData = await this.getCSVChunk();
+      
+      if (!chunkData || chunkData.length === 0) {
+        this.progress.status = "completed";
+        this.progress.overallProgress = 100;
+        this.updateProgress(100, "completing", "Seeding completed successfully");
+        return this.progress;
+      }
+
+      this.updateProgress(10, "processing", \`Processing chunk \${(this.request.chunkIndex || 0) + 1}\`);
+      
+      // Process this chunk using dynamic logic
+      await this.processChunkDataWithDynamicLogic(chunkData);
+      
+      // Update progress
+      const totalRows = await this.getTotalRowCount();
+      this.progress.processedRows += chunkData.length;
+      const progressPercent = Math.min(95, (this.progress.processedRows / totalRows) * 100);
+      this.updateProgress(progressPercent, "processing", \`Processed \${this.progress.processedRows}/\${totalRows} rows\`);
+
+      // Check if we need to continue or if we're done
+      if (this.progress.processedRows < totalRows) {
+        this.progress.status = "processing";
+        await this.scheduleNextChunk(this.progress.processedRows, totalRows, DynamicCSVProcessor.CHUNK_SIZE);
+      } else {
+        this.progress.status = "completed";
+        this.progress.overallProgress = 100;
+        this.updateProgress(100, "completing", "Seeding completed successfully");
+      }
+
       return this.progress;
+    } catch (error) {
+      console.error('❌ Error in processSingleChunk:', error);
+      this.progress.status = "failed";
+      this.errors.push({
+        message: error.message,
+        stack: error.stack,
+        timestamp: new Date(),
+      });
+      this.progress.errors = this.errors;
+      throw error;
     }
-
-    this.updateProgress(10, "processing", \`Processing chunk \${(this.request.chunkIndex || 0) + 1}\`);
-    
-    // Process this chunk using dynamic logic
-    await this.processChunkDataWithDynamicLogic(chunkData);
-    
-    // Update progress
-    const totalRows = await this.getTotalRowCount();
-    this.progress.processedRows += chunkData.length;
-    const progressPercent = Math.min(95, (this.progress.processedRows / totalRows) * 100);
-    this.updateProgress(progressPercent, "processing", \`Processed \${this.progress.processedRows}/\${totalRows} rows\`);
-
-    // Check if we need to continue or if we're done
-    if (this.progress.processedRows < totalRows) {
-      this.progress.status = "processing";
-      await this.scheduleNextChunk(this.progress.processedRows, totalRows, DynamicCSVProcessor.CHUNK_SIZE);
-    } else {
-      this.progress.status = "completed";
-      this.progress.overallProgress = 100;
-      this.updateProgress(100, "completing", "Seeding completed successfully");
-    }
-
-    return this.progress;
   }
 
   private async getCSVContentFromStorage(): Promise<string> {
@@ -450,7 +592,7 @@ class DynamicCSVProcessor {
         throw new Error('No file path provided');
       }
 
-      console.log('Downloading CSV from storage:', filePath);
+      console.log('📥 Downloading CSV from storage:', filePath);
 
       const { data, error } = await this.supabaseClient.storage
         .from('csv-uploads')
@@ -461,10 +603,11 @@ class DynamicCSVProcessor {
       }
 
       const csvContent = await data.text();
+      console.log(\`📄 Downloaded CSV: \${csvContent.length} characters\`);
       return csvContent;
 
     } catch (error) {
-      console.error('Error downloading CSV:', error);
+      console.error('❌ Error downloading CSV:', error);
       throw error;
     }
   }
@@ -485,7 +628,7 @@ class DynamicCSVProcessor {
       }
 
       // Get headers and slice the data for this chunk
-      const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+      const headers = this.parseCSVLine(lines[0]);
       const dataLines = lines.slice(1);
       const chunkLines = dataLines.slice(startRow, endRow);
 
@@ -494,20 +637,25 @@ class DynamicCSVProcessor {
       }
 
       // Parse chunk into objects
-      const chunkData = chunkLines.map(line => {
-        const values = line.split(',').map(v => v.trim().replace(/"/g, ''));
-        const row: any = {};
-        headers.forEach((header, index) => {
-          row[header] = values[index] || '';
-        });
-        return row;
-      });
+      const chunkData = chunkLines.map((line, index) => {
+        try {
+          const values = this.parseCSVLine(line);
+          const row: any = {};
+          headers.forEach((header, headerIndex) => {
+            row[header] = values[headerIndex] || '';
+          });
+          return row;
+        } catch (error) {
+          console.warn(\`⚠️ Failed to parse CSV line \${startRow + index + 1}: \${error.message}\`);
+          return null;
+        }
+      }).filter(row => row !== null);
 
       console.log(\`Parsed \${chunkData.length} rows for chunk \${chunkIndex}\`);
       return chunkData;
 
     } catch (error) {
-      console.error('Error getting CSV chunk:', error);
+      console.error('❌ Error getting CSV chunk:', error);
       throw new Error(\`Failed to get CSV chunk: \${error.message}\`);
     }
   }
@@ -725,12 +873,14 @@ serve(async (req: Request) => {
             }
             
           } catch (error) {
+            console.error('❌ Streaming processing error:', error);
             // Send error message
             const errorData = JSON.stringify({
               type: "error",
               data: {
                 success: false,
                 error: error.message || "Internal server error",
+                stack: error.stack,
               },
             });
             
@@ -766,10 +916,12 @@ serve(async (req: Request) => {
       }
 
     } catch (error) {
-      console.error('Processing error:', error);
+      console.error('❌ Processing error:', error);
+      console.error('❌ Error stack:', error.stack);
       return new Response(JSON.stringify({
         success: false,
         error: error.message,
+        stack: error.stack,
       }), {
         status: 500,
         headers: { "Content-Type": "application/json" },

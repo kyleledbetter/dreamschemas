@@ -10,23 +10,22 @@ import { User } from "@supabase/supabase-js";
 import {
   AlertCircle,
   ArrowRight,
+  ArrowRightIcon,
   Brain,
   CheckCircle2,
   Cloud,
   Download,
   Eye,
-  FileText,
   Info,
   Play,
   Plus,
+  RefreshCw,
   RotateCcw,
   Sparkles,
   Upload,
   Zap,
-  RefreshCw,
-  ArrowRightIcon,
 } from "lucide-react";
-import React, { useCallback, useState, useEffect } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 
 // Import our feature components
 import { SchemaOptimizationPanel } from "@/components/ai/schema-optimization-panel";
@@ -34,13 +33,15 @@ import { EnhancedCSVDropzone } from "@/components/csv/enhanced-csv-dropzone";
 import { ExportManagerUI } from "@/components/export/export-manager-ui";
 import { FeedbackManager } from "@/components/feedback/feedback-manager";
 import { VisualSchemaEditor } from "@/components/schema/visual-schema-editor";
+import { DataSeedingInterface } from "@/components/seeding/data-seeding-interface";
 import { MigrationDeployer } from "@/components/supabase/migration-deployer";
 import { ProjectSelector } from "@/components/supabase/project-selector";
-import { DataSeedingInterface } from "@/components/seeding/data-seeding-interface";
 
 // Import types and utilities
 import type { SchemaOptimizationResult } from "@/lib/ai/schema-optimizer";
 import type { CSVValidationResult } from "@/lib/csv/validator";
+import { ProjectStorage } from "@/lib/storage/project-storage";
+import { SchemaStorage } from "@/lib/storage/schema-storage";
 import type {
   DeploymentResult,
   SupabaseProject,
@@ -56,9 +57,8 @@ import type {
   PostgresType,
   Table,
 } from "@/types/schema.types";
-import { ProjectStorage } from "@/lib/storage/project-storage";
-import { SchemaStorage } from "@/lib/storage/schema-storage";
 import { SupabaseLogoMark, SupabaseLogoMarkRed } from "../supabase-logo";
+import { postProcessSchemaTypes } from "@/lib/utils/schema-type-processor";
 
 interface SchemaWorkflowProps {
   user: User;
@@ -133,7 +133,7 @@ interface AIAnalysisRLSPolicy {
   name: string;
   operation: "SELECT" | "INSERT" | "UPDATE" | "DELETE";
   using?: string;
-  with_check?: boolean;
+  with_check?: string;
   definition?: string;
 }
 
@@ -691,18 +691,22 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                                 | "INSERT"
                                 | "UPDATE"
                                 | "DELETE",
-                              using: policy.using || policy.definition || "",
-                              withCheck: policy.with_check ? "" : "",
+                              using: policy.using || "",
+                              withCheck: policy.with_check || "",
                               roles: ["authenticated"],
                             })
                           )
                       ),
                     };
 
-                    // Initialize optimization result with the generated schema
+                    // CRITICAL: Apply post-processing to fix type issues (TEXT -> UUID, DECIMAL, etc.)
+                    const optimizedSchema =
+                      postProcessSchemaTypes(generatedSchema);
+
+                    // Initialize optimization result with the optimized schema
                     const optimizationResult: SchemaOptimizationResult = {
                       originalSchema: generatedSchema,
-                      optimizedSchema: generatedSchema,
+                      optimizedSchema: optimizedSchema,
                       suggestions: [],
                       summary: {
                         totalSuggestions: 0,
@@ -715,7 +719,7 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                         reasoning:
                           "Initial schema generated successfully. Ready for optimization.",
                         suggestions: [],
-                        tables: generatedSchema.tables.map((table) => ({
+                        tables: optimizedSchema.tables.map((table) => ({
                           name: table.name,
                           columns: table.columns.map((col) => ({
                             name: col.name,
@@ -742,7 +746,7 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                     // Save schema to localStorage for persistence
                     try {
                       SchemaStorage.save({
-                        schema: generatedSchema,
+                        schema: optimizedSchema,
                         originalAnalysis: analysis,
                         csvFileNames: state.csvResults.map(
                           (r, index) => `file_${index + 1}.csv`
@@ -756,7 +760,7 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                     }
 
                     updateState({
-                      generatedSchema,
+                      generatedSchema: optimizedSchema,
                       optimizationResult,
                       isProcessing: false,
                       analysisProgress: metadata.progress,
@@ -1080,18 +1084,14 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                 Disconnect Supabase
               </Button>
             )}
-
-            <Button variant="outline" size="lg" className="gap-2">
-              <FileText className="h-4 w-4" />
-              View Examples
-            </Button>
           </div>
 
           <Alert className="max-w-2xl mx-auto">
             <Info className="h-4 w-4" />
             <AlertDescription>
-              Your CSV data is processed entirely client-side. No data is sent
-              to external servers during analysis.
+              Your CSV data is processed client-side and the schema and sample
+              rows are scanned by Google Gemini. No data is saved to external
+              servers during analysis.
             </AlertDescription>
           </Alert>
 
@@ -1579,13 +1579,8 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                                           tableName: table.name,
                                           name: policy.name,
                                           command: policy.operation,
-                                          using:
-                                            policy.using ||
-                                            policy.definition ||
-                                            "",
-                                          withCheck: policy.with_check
-                                            ? ""
-                                            : "",
+                                          using: policy.using || "",
+                                          withCheck: policy.with_check || "",
                                           roles: ["authenticated"],
                                         })
                                       ) || []
@@ -1640,9 +1635,35 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                                     },
                                   };
 
+                                // Apply post-processing to fix type issues (TEXT -> UUID, DECIMAL, etc.)
+                                const optimizedRefinedSchema =
+                                  postProcessSchemaTypes(refinedSchema);
+
+                                // Save refined schema to localStorage for persistence
+                                try {
+                                  SchemaStorage.save({
+                                    schema: optimizedRefinedSchema,
+                                    originalAnalysis: analysis,
+                                    csvFileNames: state.csvResults.map(
+                                      (r, index) => `file_${index + 1}.csv`
+                                    ),
+                                  });
+                                  console.log(
+                                    "✅ Refined schema saved to localStorage"
+                                  );
+                                } catch (error) {
+                                  console.warn(
+                                    "⚠️ Failed to save refined schema to localStorage:",
+                                    error
+                                  );
+                                }
+
                                 updateState({
-                                  generatedSchema: refinedSchema,
-                                  optimizationResult: updatedOptimizationResult,
+                                  generatedSchema: optimizedRefinedSchema,
+                                  optimizationResult: {
+                                    ...updatedOptimizationResult,
+                                    optimizedSchema: optimizedRefinedSchema,
+                                  },
                                   isProcessing: false,
                                   analysisProgress: metadata.progress,
                                   currentStep: "optimize", // Return to optimize step after completion
@@ -1677,44 +1698,9 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                 }
               }}
               onExportOptimized={() => {
-                handleOptimization({
-                  originalSchema: state.generatedSchema!,
-                  optimizedSchema: state.generatedSchema!,
-                  suggestions: [],
-                  summary: {
-                    totalSuggestions: 0,
-                    criticalIssues: 0,
-                    autoApplicableCount: 0,
-                    estimatedPerformanceGain: 0,
-                    confidenceScore: 85,
-                  },
-                  aiAnalysis: {
-                    reasoning:
-                      "Initial schema generated successfully. Ready for optimization.",
-                    suggestions: [],
-                    tables: state.generatedSchema!.tables.map((table) => ({
-                      name: table.name,
-                      columns: table.columns.map((col) => ({
-                        name: col.name,
-                        type: col.type,
-                        nullable: col.nullable,
-                        length: col.length,
-                        precision: col.precision,
-                        scale: col.scale,
-                        defaultValue: col.defaultValue,
-                        constraints: col.constraints.map((c) => c.type),
-                        reasoning:
-                          col.comment ||
-                          `Column ${col.name} of type ${col.type}`,
-                      })),
-                      relationships: [],
-                      indexes: [],
-                      comment: table.comment,
-                      rlsPolicies: [],
-                    })),
-                    confidence: 0.85,
-                  },
-                });
+                // Simply mark the step as complete and proceed without overwriting the optimization result
+                handleOptimization(state.optimizationResult!);
+                nextStep();
               }}
             />
           )}
@@ -1794,7 +1780,10 @@ export function SchemaWorkflow({ user }: SchemaWorkflowProps) {
                     </p>
                   </div>
                   <Button
-                    onClick={() => goToStep("seed")}
+                    onClick={() => {
+                      markStepComplete("deploy");
+                      goToStep("seed");
+                    }}
                     className="gap-2"
                     disabled={
                       (!state.completedSteps.has("deploy") &&

@@ -1,31 +1,30 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
-import { useDropzone, type FileRejection } from "react-dropzone";
-import {
-  Upload,
-  FileText,
-  AlertCircle,
-  CheckCircle2,
-  Loader2,
-  X,
-  Settings,
-  Info,
-  Download,
-  RefreshCw,
-} from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
-import { cn } from "@/lib/utils";
 import {
   CSVValidator,
   csvValidators,
   type CSVValidationOptions,
   type CSVValidationResult,
 } from "@/lib/csv/validator";
+import { cn } from "@/lib/utils";
+import {
+  AlertCircle,
+  CheckCircle2,
+  Download,
+  FileText,
+  Loader2,
+  RefreshCw,
+  Settings,
+  Upload,
+  X,
+} from "lucide-react";
+import { useCallback, useState } from "react";
+import { useDropzone, type FileRejection } from "react-dropzone";
 import { CSVValidatorDisplay } from "./csv-validator-display";
 
 interface EnhancedCSVDropzoneProps {
@@ -546,14 +545,6 @@ export function EnhancedCSVDropzone({
                 </ul>
               </div>
             </div>
-
-            <Alert className="mt-4">
-              <Info className="h-4 w-4" />
-              <AlertDescription>
-                Files are processed entirely client-side. No data is sent to
-                external servers during validation.
-              </AlertDescription>
-            </Alert>
           </CardContent>
         </Card>
       )}
