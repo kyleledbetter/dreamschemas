@@ -1,7 +1,8 @@
 "use client";
 
+import { Github, Mail, Twitter } from "lucide-react";
 import Link from "next/link";
-import { Database, Github, Twitter, Mail } from "lucide-react";
+import { LogoIcon } from "../ui/icons";
 
 const footerLinks = {
   product: [
@@ -48,11 +49,7 @@ export function Footer() {
           {/* Brand */}
           <div className="lg:col-span-2">
             <Link href="/" className="flex items-center space-x-2 mb-4">
-              <div className="relative">
-                <Database className="h-8 w-8 text-primary" />
-                <div className="absolute -top-1 -right-1 w-3 h-3 bg-accent rounded-full animate-pulse" />
-              </div>
-              <span className="text-xl font-bold">Dreamschemas</span>
+              <LogoIcon className="w-40 md:w-56 h-auto" />
             </Link>
             <p className="text-muted-foreground mb-6 max-w-md">
               Transform CSV data into production-ready Supabase schemas with

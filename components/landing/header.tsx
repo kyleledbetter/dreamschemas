@@ -3,9 +3,11 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Menu, X, Database, Sun, Moon } from "lucide-react";
+import { Menu, X, Sun, Moon } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTheme } from "next-themes";
+import { LogoIcon } from "../ui/icons";
 
 export function Header() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -30,13 +32,14 @@ export function Header() {
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
           <Link href="#header" className="flex items-center space-x-2 group">
-            <div className="relative">
-              <Database className="h-8 w-8 text-primary transition-transform group-hover:scale-110" />
-              <div className="absolute -top-1 -right-1 w-3 h-3 bg-accent rounded-full animate-pulse" />
-            </div>
-            <span className="text-xl font-bold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
-              Dreamschemas
-            </span>
+            <LogoIcon className="w-40 md:w-56 h-auto" />
+
+            <Badge
+              variant="outline"
+              className="text-xs bg-primary/25 border-primary/20 text-primary dark:text-accent/80 dark:bg-accent/10 dark:border-accent/20 relative top-0.5"
+            >
+              Alpha
+            </Badge>
           </Link>
 
           {/* Desktop Navigation */}
