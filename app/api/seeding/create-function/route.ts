@@ -658,25 +658,11 @@ const mapCSVToTableColumns = (csvRow, tableName) => {
         let bestCsvHeader = null;
         let isFromForeignKeyMapping = false;
         
-        // SPECIAL HANDLING for property_id foreign key columns
-        if (targetColStr === 'property_id' && tableName !== 'properties') {
-          // For property_id, we need to store the address components to resolve later
-          const addressComponents = {
-            street: csvRow['STREETADDRESS'] || csvRow['PROPERTYFULLSTREETADDRESS'] || '',
-            city: csvRow['CITY'] || '',
-            state: csvRow['STATE'] || '',
-            zip: csvRow['ZIP_CODE'] || ''
-          };
-          
-          const addressKey = [addressComponents.street, addressComponents.city, addressComponents.state, addressComponents.zip]
-            .join('|').toLowerCase().trim();
-            
-          if (addressKey && addressKey !== '|||') {
-            mapped[targetColStr] = addressKey; // Store address key for FK resolution
-            mappedFields.push(\`"Address Components" → \${targetColStr} (FK)\`);
-            console.log(\`🔗 \${tableName}: Property FK mapping: "\${addressKey}" → \${targetColStr}\`);
-            return;
-          }
+        // DYNAMIC FK HANDLING: No hardcoded tables - just mark FK columns for later resolution
+        if (targetColStr.endsWith('_id') && targetColStr !== 'id') {
+          // This is likely a foreign key column, but we'll handle it generically
+          console.log(\`🔗 DYNAMIC: Detected potential FK column: \${targetColStr}\`);
+          // We'll process this like any other column and let FK resolution handle it later
         }
         
         // If no foreign key mapping found, use regular column matching
@@ -764,193 +750,182 @@ const mapCSVToTableColumns = (csvRow, tableName) => {
 };`,
 
     relationshipResolvers: `
-// Global session cache for cross-table FK resolution
+// COMPLETELY DYNAMIC Global session cache - NO HARDCODED TABLES
 const SESSION_FK_CACHE = {
-  propertyAddressToId: new Map(), // address -> property_id mappings
-  permitAddressToId: new Map(),   // address -> permit_id mappings
-  insertedRecords: new Map(),     // table -> records mappings
+  tableRecords: new Map(),        // tableName -> records array
+  fkMappings: new Map(),          // "sourceColumn->targetTable" -> Map(value -> id)
   
-  // Store inserted records for FK resolution
+  // DYNAMIC: Store inserted records for FK resolution
   storeInsertedRecords(tableName, records) {
-    if (!records || !Array.isArray(records)) return;
-    
-    console.log(\`📋 Storing \${records.length} inserted \${tableName} records for FK resolution\`);
-    
-    if (tableName === 'properties') {
-      records.forEach(record => {
-        if (record.id && record.street_address) {
-          const addressKey = [
-            record.street_address || '',
-            record.city || '',
-            record.state || '',
-            record.zip_code || ''
-          ].join('|').toLowerCase().trim();
-          
-          if (addressKey && addressKey !== '|||') {
-            this.propertyAddressToId.set(addressKey, record.id);
-            console.log(\`🏠 Cached property: \${addressKey} -> \${record.id}\`);
-          }
-        }
-      });
-      console.log(\`✅ Property cache now has \${this.propertyAddressToId.size} entries\`);
+    try {
+      if (!records || !Array.isArray(records) || records.length === 0) return;
+      
+      console.log(\`📋 DYNAMIC: Storing \${records.length} \${tableName} records for FK resolution\`);
+      
+      // Store records by table name
+      if (!this.tableRecords.has(tableName)) {
+        this.tableRecords.set(tableName, []);
+      }
+      this.tableRecords.get(tableName).push(...records);
+      
+      console.log(\`✅ DYNAMIC: Stored \${records.length} \${tableName} records (total: \${this.tableRecords.get(tableName).length})\`);
+      
+    } catch (error) {
+      console.error(\`❌ DYNAMIC: Error storing records for \${tableName}: \${error.message}\`);
     }
-    
-    if (tableName === 'permits') {
-      records.forEach(record => {
-        if (record.id && record.property_id) {
-          // For permits, we can use the property address to create permit mappings
-          const propertyId = record.property_id;
-          
-          // Find the address key for this property
-          for (const [addressKey, propId] of this.propertyAddressToId.entries()) {
-            if (propId === propertyId) {
-              this.permitAddressToId.set(addressKey, record.id);
-              console.log(\`🏗️  Cached permit: \${addressKey} -> \${record.id}\`);
-              break;
-            }
-          }
-        }
-      });
-      console.log(\`✅ Permit cache now has \${this.permitAddressToId.size} entries\`);
-    }
-    
-    // Store all records for general lookup
-    if (!this.insertedRecords.has(tableName)) {
-      this.insertedRecords.set(tableName, []);
-    }
-    this.insertedRecords.get(tableName).push(...records);
   },
   
-  // Resolve FK using cached data
+  // DYNAMIC: Resolve FK using simple ID-based lookups only
   resolveForeignKey(value, targetTable, sourceColumn) {
-    if (!value || value === '') return null;
-    
-    // Handle property_id resolution
-    if (sourceColumn === 'property_id' && targetTable === 'properties') {
-      const resolvedId = this.propertyAddressToId.get(value);
-      if (resolvedId) {
-        console.log(\`🔗 Resolved property FK: \${value} -> \${resolvedId}\`);
-        return resolvedId;
-      } else {
-        console.warn(\`⚠️  Property address not found in cache: \${value}\`);
-        console.warn(\`🔍 Available addresses: \${Array.from(this.propertyAddressToId.keys()).slice(0, 3).join(', ')}\`);
+    try {
+      console.log(\`🔍 DYNAMIC: Attempting FK resolution: \${sourceColumn}=\${value} -> \${targetTable}\`);
+      
+      if (!value || value === '' || value === null || value === undefined) {
+        console.log(\`⏭️ DYNAMIC: Empty value, returning null\`);
         return null;
       }
-    }
-    
-    // Handle permit_id resolution
-    if (sourceColumn === 'permit_id' && targetTable === 'permits') {
-      const resolvedId = this.permitAddressToId.get(value);
-      if (resolvedId) {
-        console.log(\`🔗 Resolved permit FK: \${value} -> \${resolvedId}\`);
-        return resolvedId;
-      } else {
-        console.warn(\`⚠️  Permit address not found in cache: \${value}\`);
+      
+      // Convert to string safely
+      const valueStr = String(value).trim();
+      if (!valueStr) return null;
+      
+      // SIMPLE STRATEGY: If it's already a valid UUID, use it
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{3}-[0-9a-f]{3}-[0-9a-f]{12}$/i.test(valueStr)) {
+        console.log(\`✅ DYNAMIC: Value is already a valid UUID: \${valueStr}\`);
+        return valueStr;
+      }
+      
+      // For non-UUID values, try to find matching records in target table
+      const targetRecords = this.tableRecords.get(targetTable) || [];
+      if (targetRecords.length === 0) {
+        console.warn(\`⚠️ DYNAMIC: No cached records for target table \${targetTable}\`);
         return null;
       }
+      
+      // Look for exact matches in common identifier fields
+      const commonIdFields = ['name', 'title', 'code', 'identifier', 'key'];
+      for (const record of targetRecords) {
+        if (!record || typeof record !== 'object') continue;
+        
+        for (const field of commonIdFields) {
+          if (record[field] && String(record[field]).toLowerCase().trim() === valueStr.toLowerCase()) {
+            console.log(\`✅ DYNAMIC: Found FK match via \${field}: \${valueStr} -> \${record.id}\`);
+            return record.id;
+          }
+        }
+      }
+      
+      console.warn(\`⚠️ DYNAMIC: Could not resolve FK \${sourceColumn}=\${valueStr} -> \${targetTable}\`);
+      return null;
+      
+    } catch (error) {
+      console.error(\`❌ DYNAMIC: FK resolution error: \${error.message}\`);
+      return null;
     }
-    
-    // For other FKs, check if it's already a valid UUID
-    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{3}-[0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
-      return value;
-    }
-    
-    console.warn(\`⚠️  Could not resolve FK: \${sourceColumn} -> \${targetTable} with value: \${value}\`);
-    return null;
   }
 };
 
-// Main foreign key resolution function
+// COMPLETELY DYNAMIC foreign key resolution function - NO HARDCODED LOGIC
 const resolveForeignKeys = async (data, tableName, supabaseClient) => {
-  console.log(\`🔗 \${tableName}: Resolving foreign keys for \${data.length} rows...\`);
-  
-  const tableSchema = SCHEMA_CONFIG.tables.find(t => t.name === tableName);
-  if (!tableSchema) {
-    console.log(\`⏭️  \${tableName}: No schema found\`);
-    return data;
-  }
-  
-  // Find foreign key columns
-  const foreignKeys = tableSchema.columns.filter(col => 
-    col.constraints && col.constraints.some(c => c.type === 'FOREIGN KEY')
-  );
-  
-  if (foreignKeys.length === 0) {
-    console.log(\`⏭️  \${tableName}: No foreign keys to resolve\`);
-    return data;
-  }
-  
-  const resolvedData = [];
-  const errors = [];
-  
-  console.log(\`🔍 \${tableName}: Found \${foreignKeys.length} FK columns: \${foreignKeys.map(fk => fk.name).join(', ')}\`);
-  
-  for (const row of data) {
-    // Safety check for row validity
-    if (!row || typeof row !== 'object') {
-      console.warn(\`⚠️ \${tableName}: Invalid row data in FK resolution, skipping\`);
-      continue;
+  try {
+    console.log(\`🔗 DYNAMIC: Starting FK resolution for \${tableName} with \${data.length} rows...\`);
+    
+    // BULLETPROOF null safety for input data
+    if (!data || !Array.isArray(data)) {
+      console.warn(\`⚠️ DYNAMIC: Invalid data array for \${tableName}, returning empty array\`);
+      return [];
     }
     
-    const resolvedRow = { ...row };
-    let hasErrors = false;
+    if (data.length === 0) {
+      console.log(\`⏭️ DYNAMIC: No data to process for \${tableName}\`);
+      return [];
+    }
     
-    // Resolve each foreign key in this row
-    for (const fkColumn of foreignKeys) {
-      const originalValue = row[fkColumn.name];
+    // Check if we have schema info - if not, skip FK resolution
+    const tableSchema = SCHEMA_CONFIG.tables.find(t => t && t.name === tableName);
+    if (!tableSchema || !tableSchema.columns) {
+      console.log(\`⏭️ DYNAMIC: No schema found for \${tableName}, skipping FK resolution\`);
+      return data;
+    }
+    
+    // Find FK columns dynamically - no hardcoded checks
+    const foreignKeys = tableSchema.columns.filter(col => {
+      if (!col || !col.constraints || !Array.isArray(col.constraints)) return false;
+      return col.constraints.some(c => c && c.type === 'FOREIGN KEY');
+    });
+    
+    if (foreignKeys.length === 0) {
+      console.log(\`⏭️ DYNAMIC: No FK columns found for \${tableName}\`);
+      return data;
+    }
+    
+    console.log(\`🔍 DYNAMIC: Found \${foreignKeys.length} FK columns: \${foreignKeys.map(fk => fk.name).join(', ')}\`);
+    
+    const resolvedData = [];
+    
+    // Process each row with maximum safety
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
       
-      if (originalValue != null && originalValue !== '') {
+      // BULLETPROOF row validation
+      if (row === null || row === undefined) {
+        console.warn(\`⚠️ DYNAMIC: Null/undefined row at index \${i}, skipping\`);
+        continue;
+      }
+      
+      if (typeof row !== 'object' || Array.isArray(row)) {
+        console.warn(\`⚠️ DYNAMIC: Invalid row type at index \${i}, skipping\`);
+        continue;
+      }
+      
+      // Create resolved row safely
+      const resolvedRow = { ...row };
+      
+      // Process each FK column
+      for (const fkColumn of foreignKeys) {
+        if (!fkColumn || !fkColumn.name) continue;
+        
         try {
-          const constraint = fkColumn.constraints.find(c => c.type === 'FOREIGN KEY');
-          const targetTable = constraint?.referencedTable || 'unknown';
+          const originalValue = row[fkColumn.name];
           
-          const resolvedValue = SESSION_FK_CACHE.resolveForeignKey(
-            originalValue, 
-            targetTable, 
-            fkColumn.name
-          );
-          
-          if (resolvedValue) {
-            resolvedRow[fkColumn.name] = resolvedValue;
-          } else {
-            console.warn(\`⚠️  \${tableName}: Could not resolve FK \${fkColumn.name}="\${originalValue}" -> \${targetTable}\`);
+          if (originalValue != null && originalValue !== '') {
+            // Find target table from constraint
+            const constraint = fkColumn.constraints.find(c => c && c.type === 'FOREIGN KEY');
+            const targetTable = constraint?.referencedTable || null;
             
-            // Check if the column is nullable
-            if (fkColumn.nullable) {
-              resolvedRow[fkColumn.name] = null; // Set to null if nullable
-            } else {
-              hasErrors = true;
-              errors.push(\`Required FK \${fkColumn.name}="\${originalValue}" could not be resolved\`);
+            if (targetTable) {
+              const resolvedValue = SESSION_FK_CACHE.resolveForeignKey(
+                originalValue, 
+                targetTable, 
+                fkColumn.name
+              );
+              
+              if (resolvedValue) {
+                resolvedRow[fkColumn.name] = resolvedValue;
+              } else if (fkColumn.nullable) {
+                resolvedRow[fkColumn.name] = null; // Set nullable FKs to null if unresolved
+              }
+              // If not nullable and can't resolve, keep original value
             }
           }
-        } catch (error) {
-          console.error(\`❌ \${tableName}: FK resolution error for \${fkColumn.name}:\`, error.message);
-          hasErrors = true;
-          errors.push(\`FK resolution error: \${error.message}\`);
+        } catch (fkError) {
+          console.warn(\`⚠️ DYNAMIC: FK resolution error for \${fkColumn.name}: \${fkError.message}\`);
+          // Continue processing other columns
         }
       }
-    }
-    
-    if (!hasErrors) {
+      
       resolvedData.push(resolvedRow);
     }
+    
+    console.log(\`✅ DYNAMIC: FK resolution complete - \${resolvedData.length}/\${data.length} rows processed\`);
+    return resolvedData;
+    
+  } catch (error) {
+    console.error(\`❌ DYNAMIC: Fatal error in FK resolution for \${tableName}: \${error.message}\`);
+    console.error(\`🔍 DYNAMIC: Error stack: \${error.stack}\`);
+    // Return original data on error
+    return data || [];
   }
-  
-  if (errors.length > 0) {
-    console.warn(\`⚠️  \${tableName}: \${errors.length} FK resolution errors (showing first 3):\`);
-    errors.slice(0, 3).forEach(error => console.warn(\`   - \${error}\`));
-  }
-  
-  console.log(\`✅ \${tableName}: FK resolution complete - \${resolvedData.length}/\${data.length} rows resolved\`);
-  
-  // Final safety check - ensure all returned data is valid
-  const validResolvedData = resolvedData.filter(row => row && typeof row === 'object');
-  
-  if (validResolvedData.length !== resolvedData.length) {
-    console.warn(\`⚠️ \${tableName}: Filtered out \${resolvedData.length - validResolvedData.length} invalid rows from FK resolution\`);
-  }
-  
-  return validResolvedData;
 };`,
 
     validationRules: `
@@ -959,8 +934,36 @@ const validateRowForTable = (row, tableName) => {
   const errors = [];
   const warnings = [];
   
-  if (!row || typeof row !== 'object') {
-    errors.push('Row is not a valid object');
+  // BULLETPROOF null safety checks
+  if (row === null) {
+    errors.push('Row is null');
+    return { isValid: false, errors, warnings };
+  }
+  
+  if (row === undefined) {
+    errors.push('Row is undefined');
+    return { isValid: false, errors, warnings };
+  }
+  
+  if (typeof row !== 'object') {
+    errors.push(\`Row is not an object (type: \${typeof row})\`);
+    return { isValid: false, errors, warnings };
+  }
+  
+  if (Array.isArray(row)) {
+    errors.push('Row is an array, expected object');
+    return { isValid: false, errors, warnings };
+  }
+  
+  // Check if row has any enumerable properties safely
+  try {
+    const keys = Object.keys(row);
+    if (keys.length === 0) {
+      warnings.push('Row is empty object');
+      return { isValid: true, errors, warnings };
+    }
+  } catch (keyError) {
+    errors.push(\`Cannot read row properties: \${keyError.message}\`);
     return { isValid: false, errors, warnings };
   }
   

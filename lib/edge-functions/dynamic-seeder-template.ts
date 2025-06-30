@@ -100,57 +100,131 @@ class DynamicCSVProcessor {
   private processedRowsCache = new Map<string, string>();
 
   constructor(request: SeedDataRequest, supabaseUrl: string, supabaseKey: string) {
-    this.request = request;
-    this.startTime = Date.now();
-    this.serviceKey = supabaseKey;
-    
-    // Safely instantiate FK resolver if available
     try {
-      this.fkResolver = typeof ForeignKeyResolver !== 'undefined' ? new ForeignKeyResolver() : null;
-    } catch (error) {
-      console.log('⚠️ ForeignKeyResolver not available, using fallback');
-      this.fkResolver = null;
-    }
-    
-    // CRITICAL: Ensure service role key authentication
-    console.log('🔧 Creating Supabase client...');
-    console.log('🔧 URL:', supabaseUrl);
-    console.log('🔧 Key length:', supabaseKey?.length || 0);
-    console.log('🔧 Key starts with:', supabaseKey?.substring(0, 15) || 'NO KEY');
-    
-    this.supabaseClient = createClient(supabaseUrl, supabaseKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false
-      },
-      global: {
-        headers: {
-          'Authorization': \`Bearer \${supabaseKey}\`
-        }
+      console.log('🔍 CONSTRUCTOR: Starting - absolutely bulletproof version');
+      console.log('🔍 CONSTRUCTOR: Request type:', typeof request);
+      console.log('🔍 CONSTRUCTOR: Request null check:', request === null);
+      console.log('🔍 CONSTRUCTOR: Request undefined check:', request === undefined);
+      console.log('🔍 CONSTRUCTOR: URL type:', typeof supabaseUrl);
+      console.log('🔍 CONSTRUCTOR: URL null check:', supabaseUrl === null);
+      console.log('🔍 CONSTRUCTOR: Key type:', typeof supabaseKey);
+      console.log('🔍 CONSTRUCTOR: Key null check:', supabaseKey === null);
+      
+      // BULLETPROOF parameter validation
+      if (request === null || request === undefined) {
+        throw new Error('Request parameter is null or undefined');
       }
-    });
-    
-    console.log('✅ Supabase client created with service role key');
-    
-    // Test database connectivity and permissions
-    this.testDatabaseAccess().catch(error => {
-      console.log('❌ Database access test failed:', error.message);
-    });
-    
-    this.progress = {
-      jobId: request.jobId,
-      status: "processing",
-      overallProgress: 0,
-      currentPhase: "parsing",
-      processedRows: request.processedRows || 0,
-      successfulRows: 0,
-      failedRows: 0,
-      errors: [],
-      warnings: [],
-      lastUpdate: new Date(),
-      needsContinuation: false,
-      continuationData: undefined,
-    };
+      
+      if (typeof request !== 'object') {
+        throw new Error(\`Request must be an object, got: \${typeof request}\`);
+      }
+      
+      if (supabaseUrl === null || supabaseUrl === undefined) {
+        throw new Error('supabaseUrl parameter is null or undefined');
+      }
+      
+      if (typeof supabaseUrl !== 'string') {
+        throw new Error(\`supabaseUrl must be a string, got: \${typeof supabaseUrl}\`);
+      }
+      
+      if (supabaseKey === null || supabaseKey === undefined) {
+        throw new Error('supabaseKey parameter is null or undefined');
+      }
+      
+      if (typeof supabaseKey !== 'string') {
+        throw new Error(\`supabaseKey must be a string, got: \${typeof supabaseKey}\`);
+      }
+      
+      console.log('✅ CONSTRUCTOR: Parameter validation passed');
+      
+      // Safe assignment with additional checks
+      this.request = request;
+      this.startTime = Date.now();
+      this.serviceKey = supabaseKey;
+      
+      console.log('✅ CONSTRUCTOR: Basic properties assigned');
+      
+      // BULLETPROOF FK resolver initialization
+      this.fkResolver = null;
+      try {
+        if (typeof ForeignKeyResolver !== 'undefined' && ForeignKeyResolver !== null) {
+          this.fkResolver = new ForeignKeyResolver();
+          console.log('✅ CONSTRUCTOR: ForeignKeyResolver created');
+        } else {
+          console.log('⚠️ CONSTRUCTOR: ForeignKeyResolver not available');
+        }
+      } catch (resolverError) {
+        console.log('⚠️ CONSTRUCTOR: ForeignKeyResolver creation failed:', resolverError.message);
+        this.fkResolver = null;
+      }
+      
+      // BULLETPROOF Supabase client creation
+      console.log('🔧 CONSTRUCTOR: Creating Supabase client...');
+      console.log('🔧 CONSTRUCTOR: URL length:', supabaseUrl.length);
+      console.log('🔧 CONSTRUCTOR: Key length:', supabaseKey.length);
+      console.log('🔧 CONSTRUCTOR: URL first 20 chars:', supabaseUrl.substring(0, 20));
+      console.log('🔧 CONSTRUCTOR: Key first 20 chars:', supabaseKey.substring(0, 20));
+      
+      try {
+        this.supabaseClient = createClient(supabaseUrl, supabaseKey, {
+          auth: {
+            autoRefreshToken: false,
+            persistSession: false
+          },
+          global: {
+            headers: {
+              'Authorization': \`Bearer \${supabaseKey}\`
+            }
+          }
+        });
+        console.log('✅ CONSTRUCTOR: Supabase client created successfully');
+      } catch (clientError) {
+        console.error('❌ CONSTRUCTOR: Supabase client creation failed:', clientError.message);
+        throw new Error(\`Failed to create Supabase client: \${clientError.message}\`);
+      }
+      
+      // BULLETPROOF progress object creation
+      try {
+        const jobId = (request && typeof request === 'object' && request.jobId) ? request.jobId : 'unknown';
+        const processedRows = (request && typeof request === 'object' && typeof request.processedRows === 'number') ? request.processedRows : 0;
+        
+        this.progress = {
+          jobId: jobId,
+          status: "processing",
+          overallProgress: 0,
+          currentPhase: "parsing",
+          processedRows: processedRows,
+          successfulRows: 0,
+          failedRows: 0,
+          errors: [],
+          warnings: [],
+          lastUpdate: new Date(),
+          needsContinuation: false,
+          continuationData: undefined,
+        };
+        console.log('✅ CONSTRUCTOR: Progress object created');
+      } catch (progressError) {
+        console.error('❌ CONSTRUCTOR: Progress object creation failed:', progressError.message);
+        throw new Error(\`Failed to create progress object: \${progressError.message}\`);
+      }
+      
+      // SAFE database access test - don't let this crash the constructor
+      try {
+        this.testDatabaseAccess().catch(testError => {
+          console.log('⚠️ CONSTRUCTOR: Database access test failed (non-fatal):', testError.message);
+        });
+      } catch (testSetupError) {
+        console.log('⚠️ CONSTRUCTOR: Could not set up database test (non-fatal):', testSetupError.message);
+      }
+      
+      console.log('✅ CONSTRUCTOR: Completed successfully');
+      
+    } catch (constructorError) {
+      console.error('❌ CONSTRUCTOR: FATAL ERROR:', constructorError.message);
+      console.error('❌ CONSTRUCTOR: Error stack:', constructorError.stack);
+      console.error('❌ CONSTRUCTOR: This error will crash the Edge Function');
+      throw constructorError;
+    }
   }
 
   async processCSVChunk(onProgress?: (progress: SeedingProgress) => void): Promise<SeedingProgress> {
@@ -433,17 +507,43 @@ class DynamicCSVProcessor {
           console.log(\`💾 Inserting \${validResolvedData.length} rows into \${tableName}\`);
           
           // Prepare data for insertion - remove client-generated IDs to let PostgreSQL generate them
-          const insertData = validResolvedData.map(row => {
+          const insertData = validResolvedData.map((row, index) => {
             try {
-              // Safety check before destructuring
-              if (!row || typeof row !== 'object') {
-                console.warn(\`⚠️ Invalid row data in \${tableName}, skipping\`);
+              // DIAGNOSTIC: Log problematic rows for debugging
+              console.log(\`🔍 DIAG: Processing row \${index}, type: \${typeof row}, is null: \${row === null}, is undefined: \${row === undefined}\`);
+              
+              // BULLETPROOF null safety - multiple checks
+              if (row === null) {
+                console.warn(\`⚠️ NULL row at index \${index} in \${tableName}, skipping\`);
                 return null;
               }
-              const { id, _addressKey, ...rowWithoutId } = row; // Also remove _addressKey used for FK resolution
-              return rowWithoutId; // Let PostgreSQL generate UUID with uuid_generate_v4()
+              if (row === undefined) {
+                console.warn(\`⚠️ UNDEFINED row at index \${index} in \${tableName}, skipping\`);
+                return null;
+              }
+              if (typeof row !== 'object') {
+                console.warn(\`⚠️ NON-OBJECT row at index \${index} (type: \${typeof row}) in \${tableName}, skipping\`);
+                return null;
+              }
+              if (Array.isArray(row)) {
+                console.warn(\`⚠️ ARRAY row at index \${index} in \${tableName}, skipping\`);
+                return null;
+              }
+              
+              // SAFE destructuring - create new object without risky destructuring
+              const rowWithoutId = {};
+              for (const [key, value] of Object.entries(row)) {
+                if (key !== 'id' && key !== '_addressKey') {
+                  rowWithoutId[key] = value;
+                }
+              }
+              
+              console.log(\`✅ DIAG: Successfully processed row \${index}, keys: \${Object.keys(rowWithoutId).length}\`);
+              return rowWithoutId;
             } catch (error) {
-              console.warn(\`⚠️ Error preparing row for insertion in \${tableName}: \${error.message}\`);
+              console.error(\`❌ CRITICAL ERROR preparing row \${index} in \${tableName}: \${error.message}\`);
+              console.error(\`🔍 DIAG: Row data: \${JSON.stringify(row, null, 2)}\`);
+              console.error(\`🔍 DIAG: Error stack: \${error.stack}\`);
               return null;
             }
                      }).filter(row => row !== null); // Remove any failed preparations
@@ -753,44 +853,162 @@ class DynamicCSVProcessor {
 }
 
 serve(async (req: Request) => {
-  // Handle CORS
-  if (req.method === "OPTIONS") {
-    return new Response(null, {
-      status: 200,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-      },
-    });
-  }
-
-  const url = new URL(req.url);
-  const isStreaming = url.searchParams.get("stream") === "true";
-
-  if (req.method === "POST") {
+  // BULLETPROOF ERROR HANDLING - CANNOT CRASH WITH NULL
+  try {
+    console.log('🔍 SERVE: Handler started - BULLETPROOF version');
+    console.log('🔍 SERVE: Request type:', typeof req);
+    console.log('🔍 SERVE: Request null check:', req === null);
+    console.log('🔍 SERVE: Request undefined check:', req === undefined);
+    
+    // BULLETPROOF request validation
+    if (req === null || req === undefined) {
+      console.error('❌ SERVE: Request is null or undefined');
+      return new Response(JSON.stringify({
+        success: false,
+        error: "Request object is null or undefined",
+      }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    
+    // Handle CORS with null safety
+    let method = 'UNKNOWN';
     try {
-      const request = await req.json();
+      method = req.method || 'UNKNOWN';
+      console.log('🔍 SERVE: HTTP method:', method);
+    } catch (methodError) {
+      console.error('❌ SERVE: Cannot read req.method:', methodError.message);
+      return new Response(JSON.stringify({
+        success: false,
+        error: "Cannot determine HTTP method",
+      }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    
+    if (method === "OPTIONS") {
+      console.log('🔍 SERVE: Handling CORS OPTIONS request');
+      return new Response(null, {
+        status: 200,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        },
+      });
+    }
 
-      if (!request.fileId || !request.jobId || !request.schema) {
-        return new Response(JSON.stringify({
-          success: false,
-          error: "Missing required fields: fileId, jobId, or schema",
-        }), {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
+    // BULLETPROOF URL parsing
+    let url = null;
+    let isStreaming = false;
+    try {
+      url = new URL(req.url);
+      isStreaming = url.searchParams.get("stream") === "true";
+      console.log('🔍 SERVE: URL parsed, streaming:', isStreaming);
+    } catch (urlError) {
+      console.error('❌ SERVE: URL parsing failed:', urlError.message);
+      isStreaming = false; // Default to non-streaming
+    }
 
-      // Get Supabase credentials - MUST use service role key for database writes
-      const supabaseUrl = request.supabaseUrl || ('https://' + request.schema.projectId + '.supabase.co') || Deno.env.get("SUPABASE_URL");
-      
-      // Try multiple possible sources for the service key
-      let supabaseKey = request.supabaseServiceKey || 
-                        request.projectConfig?.apiKey || 
-                        request.serviceRoleKey ||
-                        request.apiKey ||
-                        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (method === "POST") {
+      try {
+        console.log('🔍 SERVE: Processing POST request');
+        
+        // BULLETPROOF JSON parsing
+        let request = null;
+        try {
+          if (!req.json || typeof req.json !== 'function') {
+            throw new Error('req.json is not a function');
+          }
+          request = await req.json();
+          console.log('🔍 SERVE: JSON parsed successfully');
+          console.log('🔍 SERVE: Request type:', typeof request);
+          console.log('🔍 SERVE: Request null check:', request === null);
+        } catch (jsonError) {
+          console.error('❌ SERVE: JSON parsing failed:', jsonError.message);
+          return new Response(JSON.stringify({
+            success: false,
+            error: \`Failed to parse JSON request: \${jsonError.message}\`,
+          }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        // BULLETPROOF request validation
+        if (request === null || request === undefined) {
+          console.error('❌ SERVE: Parsed request is null or undefined');
+          return new Response(JSON.stringify({
+            success: false,
+            error: "Request data is null or undefined",
+          }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        
+        if (typeof request !== 'object') {
+          console.error('❌ SERVE: Request is not an object, type:', typeof request);
+          return new Response(JSON.stringify({
+            success: false,
+            error: \`Request must be an object, got: \${typeof request}\`,
+          }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        
+        // Check required fields with null safety
+        const fileId = request.fileId;
+        const jobId = request.jobId;
+        const schema = request.schema;
+        
+        if (!fileId || !jobId || !schema) {
+          console.error('❌ SERVE: Missing required fields');
+          console.error('🔍 SERVE: fileId:', !!fileId);
+          console.error('🔍 SERVE: jobId:', !!jobId);
+          console.error('🔍 SERVE: schema:', !!schema);
+          return new Response(JSON.stringify({
+            success: false,
+            error: "Missing required fields: fileId, jobId, or schema",
+          }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        // BULLETPROOF Supabase credentials extraction
+        console.log('🔍 SERVE: Extracting Supabase credentials...');
+        
+        let supabaseUrl = '';
+        try {
+          // Try multiple sources for URL
+          supabaseUrl = request.supabaseUrl || 
+                       (request.schema && request.schema.projectId ? ('https://' + request.schema.projectId + '.supabase.co') : '') ||
+                       Deno.env.get("SUPABASE_URL") || 
+                       '';
+          console.log('🔍 SERVE: Supabase URL extracted:', supabaseUrl ? 'present' : 'missing');
+        } catch (urlExtractionError) {
+          console.error('❌ SERVE: Error extracting Supabase URL:', urlExtractionError.message);
+          supabaseUrl = '';
+        }
+        
+        let supabaseKey = '';
+        try {
+          // Try multiple possible sources for the service key
+          supabaseKey = request.supabaseServiceKey || 
+                       (request.projectConfig && request.projectConfig.apiKey) || 
+                       request.serviceRoleKey ||
+                       request.apiKey ||
+                       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ||
+                       '';
+          console.log('🔍 SERVE: Supabase key extracted:', supabaseKey ? 'present' : 'missing');
+        } catch (keyExtractionError) {
+          console.error('❌ SERVE: Error extracting Supabase key:', keyExtractionError.message);
+          supabaseKey = '';
+        }
       
       console.log('🔍 Service key source check:');
       console.log('- request.supabaseServiceKey:', !!request.supabaseServiceKey);
@@ -812,9 +1030,49 @@ serve(async (req: Request) => {
         throw new Error("Service role key is required for data seeding. Please ensure SUPABASE_SERVICE_ROLE_KEY is set in your Edge Function environment.");
       }
       
-      console.log('Processing', isStreaming ? 'streaming request' : 'chunk', request.chunkIndex || 0, 'for job', request.jobId);
+        // BULLETPROOF validation before creating processor
+        if (!supabaseUrl) {
+          console.error('❌ SERVE: No Supabase URL available');
+          return new Response(JSON.stringify({
+            success: false,
+            error: "Supabase URL is required",
+          }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        
+        if (!supabaseKey) {
+          console.error('❌ SERVE: No Supabase key available');
+          return new Response(JSON.stringify({
+            success: false,
+            error: "Supabase service key is required",
+          }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        
+        console.log('🔍 SERVE: Processing', isStreaming ? 'streaming request' : 'chunk', request.chunkIndex || 0, 'for job', request.jobId);
 
-      const processor = new DynamicCSVProcessor(request, supabaseUrl, supabaseKey);
+        // BULLETPROOF processor creation
+        let processor = null;
+        try {
+          console.log('🔍 SERVE: Creating DynamicCSVProcessor...');
+          processor = new DynamicCSVProcessor(request, supabaseUrl, supabaseKey);
+          console.log('✅ SERVE: DynamicCSVProcessor created successfully');
+        } catch (processorError) {
+          console.error('❌ SERVE: Failed to create processor:', processorError.message);
+          console.error('❌ SERVE: Processor error stack:', processorError.stack);
+          return new Response(JSON.stringify({
+            success: false,
+            error: \`Failed to initialize processor: \${processorError.message}\`,
+            stack: processorError.stack,
+          }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
 
       if (isStreaming) {
         // Return Server-Sent Events stream for real-time progress updates
@@ -915,23 +1173,48 @@ serve(async (req: Request) => {
         });
       }
 
-    } catch (error) {
-      console.error('❌ Processing error:', error);
-      console.error('❌ Error stack:', error.stack);
+      } catch (error) {
+        console.error('❌ SERVE: Processing error:', error);
+        console.error('❌ SERVE: Error stack:', error.stack);
+        return new Response(JSON.stringify({
+          success: false,
+          error: error.message,
+          stack: error.stack,
+        }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    console.log('🔍 SERVE: Method not POST, returning 405');
+    return new Response("Method not allowed", {
+      status: 405,
+      headers: { "Content-Type": "application/json" },
+    });
+    
+  } catch (outerError) {
+    // ULTIMATE SAFETY NET - THIS MUST NEVER THROW
+    console.error('❌ SERVE: FATAL OUTER ERROR - This should never happen:', outerError);
+    console.error('❌ SERVE: FATAL ERROR STACK:', outerError.stack);
+    
+    try {
       return new Response(JSON.stringify({
         success: false,
-        error: error.message,
-        stack: error.stack,
+        error: "Fatal edge function error: " + (outerError.message || "Unknown error"),
+        stack: outerError.stack || "No stack available",
       }), {
         status: 500,
         headers: { "Content-Type": "application/json" },
       });
+    } catch (responseError) {
+      // If even creating the error response fails, return a basic response
+      console.error('❌ SERVE: Cannot even create error response:', responseError.message);
+      return new Response("Internal server error", {
+        status: 500,
+        headers: { "Content-Type": "text/plain" },
+      });
     }
   }
-
-  return new Response("Method not allowed", {
-    status: 405,
-    headers: { "Content-Type": "application/json" },
-  });
 });`;
 } 
