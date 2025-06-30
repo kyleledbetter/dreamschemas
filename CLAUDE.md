@@ -23,7 +23,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - No CSV data persisted on servers
 
 ### AI-Powered Schema Generation with Vercel AI SDK
-- Uses Vercel AI SDK with Gemini 2.5 Flash (`gemini-2.0-flash-preview-04-17`)
+- Uses Vercel AI SDK with Gemini 2.5 Flash (`gemini-2.5-flash`)
 - Streaming AI responses for real-time analysis feedback
 - Intelligent type detection, relationship discovery, and normalization suggestions
 - Generates production-ready Postgres schema with UUID primary keys
@@ -64,7 +64,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Framework**: Next.js 15.3 + React 19 (App Router)
 - **Language**: TypeScript with strict mode
 - **Styling**: Tailwind CSS + shadcn/ui with Supabase black/green theme
-- **AI Integration**: Vercel AI SDK with Gemini 2.5 Flash (`gemini-2.0-flash-preview-04-17`)
+- **AI Integration**: Vercel AI SDK with Gemini 2.5 Flash (`gemini-2.5-flash`)
 - **Visualization**: React Flow for schema diagrams
 - **CSV Parsing**: PapaParse with smart sampling
 - **Local Testing**: PGLite (@electric-sql/pglite) for browser-based Postgres
@@ -122,7 +122,7 @@ GOOGLE_GENERATIVE_AI_API_KEY=[Google AI Studio API Key for Gemini]
 
 ## AI Integration Details
 
-- Model: `gemini-2.0-flash-preview-04-17` via Vercel AI SDK
+- Model: `gemini-2.5-flash` via Vercel AI SDK
 - Streaming responses for real-time feedback
 - Prompt engineering optimized for schema generation
 - Confidence scoring for AI suggestions

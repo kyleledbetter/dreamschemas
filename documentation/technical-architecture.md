@@ -5,7 +5,7 @@
 - **Language**: TypeScript with strict mode
 - **Styling**: Tailwind CSS with Supabase theme (black/green)
 - **UI Components**: Shadcn UI with Supabase color scheme
-- **AI Integration**: Vercel AI SDK with Gemini 2.5 Flash (gemini-2.0-flash-preview-04-17)
+- **AI Integration**: Vercel AI SDK with Gemini 2.5 Flash (gemini-2.5-flash)
 - **Visualization**: React Flow for schema diagram
 - **CSV Parsing**: PapaParse
 - **Local Testing**: PGLite (@electric-sql/pglite)
@@ -172,7 +172,7 @@ export const AIAnalysisStream = ({ csvData, onComplete }) => {
 ```typescript
 const aiTypeDetection = async (column: ColumnData) => {
   const response = await google.generateContent({
-    model: 'gemini-2.0-flash-preview-04-17',
+    model: 'gemini-2.5-flash',
     messages: [{
       role: 'user',
       content: `Analyze these values and suggest the best PostgreSQL data type:
@@ -194,7 +194,7 @@ const aiTypeDetection = async (column: ColumnData) => {
 ```typescript
 const aiRelationshipDetection = async (tables: Table[]) => {
   const response = await google.generateContent({
-    model: 'gemini-2.0-flash-preview-04-17',
+    model: 'gemini-2.5-flash',
     messages: [{
       role: 'user',
       content: `Analyze these tables and identify relationships:
@@ -220,7 +220,7 @@ const aiRelationshipDetection = async (tables: Table[]) => {
 ```typescript
 const aiNormalizationAnalysis = async (table: Table, sampleData: any[]) => {
   const response = await google.generateContent({
-    model: 'gemini-2.0-flash-preview-04-17',
+    model: 'gemini-2.5-flash',
     messages: [{
       role: 'user',
       content: `Analyze this table for normalization opportunities:
@@ -255,7 +255,7 @@ export async function POST(req: Request) {
   
   const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENERATIVE_AI_API_KEY!)
   const model = genAI.getGenerativeModel({ 
-    model: 'gemini-2.0-flash-preview-04-17',
+    model: 'gemini-2.5-flash',
     generationConfig: {
       temperature: 0.3, // Lower temperature for more consistent schema generation
       topP: 0.9,

@@ -94,7 +94,7 @@ export const TYPE_PATTERNS = {
 
 // AI model configuration
 export const AI_CONFIG = {
-  MODEL: 'gemini-2.0-flash-preview-04-17',
+  MODEL: 'gemini-2.5-flash',
   TEMPERATURE: 0.3,
   MAX_TOKENS: 4096,
   TOP_P: 0.9,

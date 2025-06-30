@@ -3,7 +3,7 @@
 import { SchemaAnalyzer, type AISchemaAnalysis } from './schema-analyzer';
 import type { CSVValidationResult } from '../csv/validator';
 import type { CSVParseResult } from '../../types/csv.types';
-import type { DatabaseSchema, PostgresType, ConstraintType } from '../../types/schema.types';
+import type { DatabaseSchema, PostgresType, ConstraintType, RLSPolicy } from '../../types/schema.types';
 import { generateId } from '../utils/index';
 
 export interface OptimizationSuggestion {
@@ -715,15 +715,30 @@ ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
       })),
       relationships: [],
       rlsPolicies: aiAnalysis.tables.flatMap(table => 
-        table.rlsPolicies.map(policy => ({
-          id: generateId(),
-          tableName: table.name,
-          name: policy.name,
-          command: policy.operation,
-          using: policy.using || `auth.uid() = ${table.name}.user_id`,
-          withCheck: policy.with_check || `auth.uid() = ${table.name}.user_id`,
-          roles: ['authenticated']
-        }))
+        table.rlsPolicies.map(policy => {
+          const rlsPolicy: RLSPolicy = {
+            id: generateId(),
+            tableName: table.name,
+            name: policy.name,
+            command: policy.operation,
+            roles: ['authenticated']
+          };
+          
+          // Handle different policy operations correctly - SIMPLIFIED LOGIC
+          if (policy.operation === 'INSERT') {
+            // INSERT policies can only have WITH CHECK, not USING
+            rlsPolicy.withCheck = policy.with_check || 'auth.uid() IS NOT NULL';
+          } else if (policy.operation === 'UPDATE') {
+            // UPDATE policies can have both USING and WITH CHECK
+            rlsPolicy.using = policy.using || 'auth.uid() IS NOT NULL';
+            rlsPolicy.withCheck = policy.with_check || 'auth.uid() IS NOT NULL';
+          } else {
+            // SELECT and DELETE policies can only have USING
+            rlsPolicy.using = policy.using || 'auth.uid() IS NOT NULL';
+          }
+          
+          return rlsPolicy;
+        })
       ),
     };
   }

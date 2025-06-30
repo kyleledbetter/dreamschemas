@@ -82,13 +82,23 @@ export function useSeedingStream(options: SeedingStreamOptions = {}) {
       }
 
       // First, ensure the Edge Function exists in the user's project
+      console.log(`🚀 Creating Edge Function for schema with ${job.schema.tables.length} tables`);
       const createFunctionResponse = await fetch("/api/seeding/create-function", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${oauthState.accessToken}`,
         },
-        body: JSON.stringify({ projectId }),
+        body: JSON.stringify({ 
+          projectId,
+          schema: job.schema,
+          csvMetadata: job.fileUpload ? [{
+            headers: job.fileUpload.metadata?.headers || [],
+            sampleData: job.fileUpload.metadata?.sampleRows || [],
+            totalRows: job.fileUpload.metadata?.totalRows || 0,
+          }] : [],
+          useSimpleVersion: false
+        }),
       });
 
       if (!createFunctionResponse.ok) {
@@ -100,7 +110,7 @@ export function useSeedingStream(options: SeedingStreamOptions = {}) {
       const streamUrl = `/api/seeding/start?stream=true`;
       
       // Prepare request payload for the seeding job
-      const createJobData = (baseJob: SeedingJob, overrides: any = {}) => ({
+      const createJobData = (baseJob: SeedingJob, overrides: Record<string, unknown> = {}) => ({
         fileId: baseJob.fileUpload?.id || "",
         jobId,
         configuration: baseJob.configuration,

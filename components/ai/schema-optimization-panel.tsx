@@ -455,7 +455,7 @@ export function SchemaOptimizationPanel({
                   <Sparkles className="size-5" />
                   AI Schema Optimization
                   <Badge className="bg-green-100 text-green-800">
-                    {summary.confidenceScore}% Confidence
+                    {Math.round(summary.confidenceScore * 100)}% Confidence
                   </Badge>
                 </CardTitle>
                 <p className="text-sm text-muted-foreground mt-1">
@@ -487,32 +487,40 @@ export function SchemaOptimizationPanel({
           </div>
 
           {/* Summary Metrics */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-            <div className="text-center p-3 bg-muted/30 rounded-lg">
-              <p className="text-2xl font-bold text-green-600">
-                {summary.estimatedPerformanceGain}%
-              </p>
-              <p className="text-xs text-muted-foreground">Performance Gain</p>
+          {(summary.totalSuggestions > 0 ||
+            summary.criticalIssues > 0 ||
+            summary.autoApplicableCount > 0) && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+              <div className="text-center p-3 bg-muted/30 rounded-lg">
+                <p className="text-2xl font-bold text-green-600">
+                  {summary.estimatedPerformanceGain}%
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Performance Gain
+                </p>
+              </div>
+              <div className="text-center p-3 bg-muted/30 rounded-lg">
+                <p className="text-2xl font-bold text-blue-600">
+                  {summary.totalSuggestions}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Total Suggestions
+                </p>
+              </div>
+              <div className="text-center p-3 bg-muted/30 rounded-lg">
+                <p className="text-2xl font-bold text-orange-600">
+                  {summary.criticalIssues}
+                </p>
+                <p className="text-xs text-muted-foreground">Critical Issues</p>
+              </div>
+              <div className="text-center p-3 bg-muted/30 rounded-lg">
+                <p className="text-2xl font-bold text-purple-600">
+                  {summary.autoApplicableCount}
+                </p>
+                <p className="text-xs text-muted-foreground">Auto-fixable</p>
+              </div>
             </div>
-            <div className="text-center p-3 bg-muted/30 rounded-lg">
-              <p className="text-2xl font-bold text-blue-600">
-                {summary.totalSuggestions}
-              </p>
-              <p className="text-xs text-muted-foreground">Total Suggestions</p>
-            </div>
-            <div className="text-center p-3 bg-muted/30 rounded-lg">
-              <p className="text-2xl font-bold text-orange-600">
-                {summary.criticalIssues}
-              </p>
-              <p className="text-xs text-muted-foreground">Critical Issues</p>
-            </div>
-            <div className="text-center p-3 bg-muted/30 rounded-lg">
-              <p className="text-2xl font-bold text-purple-600">
-                {summary.autoApplicableCount}
-              </p>
-              <p className="text-xs text-muted-foreground">Auto-fixable</p>
-            </div>
-          </div>
+          )}
         </CardHeader>
       </Card>
 
@@ -558,18 +566,16 @@ export function SchemaOptimizationPanel({
           <div className="space-y-4">
             {/* AI Analysis Summary */}
             <Card>
-              <CardHeader>
-                <CardTitle className="text-base">AI Analysis Summary</CardTitle>
-              </CardHeader>
-              <CardContent>
+              <CardContent className="py-4">
                 <div className="space-y-3">
-                  <p className="text-sm">{aiAnalysis.reasoning}</p>
-
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                      <h4 className="font-medium text-sm mb-2">
+                      <h4 className="font-medium text-lg mb-2">
                         Generated Tables
                       </h4>
+                      <p className="text-sm text-muted-foreground mb-4">
+                        {aiAnalysis.reasoning}
+                      </p>
                       <div className="space-y-1">
                         {aiAnalysis.tables.map((table, index) => (
                           <div
@@ -591,7 +597,7 @@ export function SchemaOptimizationPanel({
 
                     <div>
                       <Card>
-                        <CardHeader>
+                        <CardHeader className="py-4">
                           <CardTitle className="text-base">
                             Refine Schema with AI
                           </CardTitle>

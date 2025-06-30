@@ -25,7 +25,7 @@ const SchemaAnalysisSchema = z.object({
       type: z.enum([
         'UUID', 'VARCHAR', 'TEXT', 'CHAR', 'SMALLINT', 'INTEGER', 'BIGINT',
         'NUMERIC', 'DECIMAL', 'REAL', 'DOUBLE PRECISION', 'BOOLEAN',
-        'DATE', 'TIME', 'TIMESTAMP', 'TIMESTAMPTZ', 'UUID', 'JSONB',
+        'DATE', 'TIME', 'TIMESTAMP', 'TIMESTAMPTZ', 'JSONB',
         'JSON', 'ARRAY', 'ENUM'
       ]),
       nullable: z.boolean(),
@@ -35,6 +35,31 @@ const SchemaAnalysisSchema = z.object({
       defaultValue: z.string().optional(),
       constraints: z.array(z.string()),
       reasoning: z.string(),
+    }).refine((column) => {
+      // MINIMAL VALIDATION - Only enforce absolute requirements, let post-processing fix everything else
+      const name = column.name.toLowerCase();
+      const type = column.type;
+      
+      // ONLY enforce the absolute minimum requirements that would break the system
+      
+      // 1. PRIMARY KEY id column MUST be UUID (non-negotiable for Supabase)
+      if (name === 'id') {
+        if (type !== 'UUID') {
+          return false;
+        }
+      }
+      
+      // 2. Audit timestamps MUST be TIMESTAMPTZ (critical for audit functionality)
+      if (name === 'created_at' || name === 'updated_at') {
+        if (type !== 'TIMESTAMPTZ' && type !== 'TIMESTAMP') {
+          return false;
+        }
+      }
+      
+      // Everything else is allowed - post-processing will fix it
+      return true;
+    }, {
+      message: "Only critical constraints: Primary key 'id' must be UUID, audit timestamps 'created_at'/'updated_at' must be TIMESTAMPTZ"
     })).refine((columns) => {
       // More flexible primary key check - allow id column with UUID type
       const idColumn = columns.find(col => col.name === 'id');
@@ -94,6 +119,21 @@ const SchemaAnalysisSchema = z.object({
       using: z.string().optional(),
       with_check: z.string().optional(),
       reasoning: z.string(),
+    }).refine((policy) => {
+      // Validate RLS policy structure based on operation type
+      if (policy.operation === 'INSERT') {
+        // INSERT policies MUST have with_check and MUST NOT have using
+        return policy.with_check && policy.with_check.trim() !== '' && !policy.using;
+      } else if (policy.operation === 'UPDATE') {
+        // UPDATE policies MUST have both using and with_check
+        return policy.using && policy.using.trim() !== '' && 
+               policy.with_check && policy.with_check.trim() !== '';
+      } else {
+        // SELECT and DELETE policies MUST have using and MUST NOT have with_check
+        return policy.using && policy.using.trim() !== '' && !policy.with_check;
+      }
+    }, {
+      message: "RLS policy structure invalid: INSERT needs with_check only, UPDATE needs both using and with_check, SELECT/DELETE need using only"
     })).optional().default([]),
   })),
   suggestions: z.array(z.object({
@@ -175,10 +215,10 @@ export class SchemaAnalyzer {
       console.log(`🔗 Total relationships: ${result.object.tables.reduce((sum, t) => sum + t.relationships.length, 0)}`);
 
       // Log the full AI-generated JSON for debugging
-      console.log('\n🔍 FULL AI-GENERATED SCHEMA JSON:');
+/*       console.log('\n🔍 FULL AI-GENERATED SCHEMA JSON:');
       console.log('=====================================');
       console.log(JSON.stringify(result.object, null, 2));
-      console.log('=====================================\n');
+      console.log('=====================================\n'); */
 
       // Additional validation for foreign key relationships (but don't fail on errors)
       try {
@@ -332,6 +372,42 @@ NULLABILITY GUIDANCE:
 - AVOID NOT NULL for user-provided data, optional fields, or any field that might be missing during import
 - REMEMBER: It's easier to add NOT NULL later than to deal with import failures
 
+TYPE SELECTION STRATEGY:
+🎯 FOCUS ON STRUCTURE: The system automatically optimizes types after generation, so prioritize getting the schema structure and relationships right.
+
+ONLY 2 REQUIREMENTS (everything else is flexible):
+1. PRIMARY KEY 'id' MUST be UUID type with DEFAULT uuid_generate_v4()
+2. AUDIT TIMESTAMPS 'created_at' and 'updated_at' MUST be TIMESTAMPTZ type
+
+EVERYTHING ELSE: Use your best judgment, but TEXT is always safe!
+- Foreign keys: TEXT, VARCHAR, or UUID - all work (system will optimize)
+- Coordinates: TEXT, DECIMAL, or NUMERIC - all work (system will optimize)
+- Years: TEXT, SMALLINT, or INTEGER - all work (system will optimize)  
+- Booleans: TEXT or BOOLEAN - both work (system will optimize)
+- Emails: TEXT or VARCHAR - both work (system will optimize)
+- Numbers: TEXT, INTEGER, or DECIMAL - all work (system will optimize)
+
+🚀 KEY INSIGHT: The post-processing system will automatically correct all column types based on naming patterns and data characteristics. Your job is to create the right table structure and relationships!
+
+RLS POLICY REQUIREMENTS:
+- Create policies for ALL operations: SELECT, INSERT, UPDATE, DELETE
+- Use Supabase Auth patterns: auth.uid(), auth.role(), auth.jwt()
+- Follow security best practices for multi-tenant applications
+- Consider data ownership patterns (user_id columns)
+
+RLS POLICY STRUCTURE (CRITICAL):
+🚨 POLICY OPERATION RULES:
+- INSERT policies: ONLY "with_check" field, NO "using" field
+- UPDATE policies: BOTH "using" AND "with_check" fields  
+- SELECT policies: ONLY "using" field, NO "with_check" field
+- DELETE policies: ONLY "using" field, NO "with_check" field
+
+RLS POLICY PATTERNS:
+- User-owned data: auth.uid() = user_id
+- Public read data: true (for SELECT only)
+- Admin-only data: auth.role() = 'admin'
+- Authenticated users: auth.uid() IS NOT NULL
+
 OUTPUT FORMAT: Return ONLY valid JSON (no markdown, no backticks, no explanations).
 
 Required JSON Structure:
@@ -350,10 +426,19 @@ Required JSON Structure:
           "reasoning": "Primary key"
         },
         {
+          "name": "user_id",
+          "type": "UUID",
+          "nullable": true,
+          "constraints": ["FOREIGN KEY REFERENCES auth.users(id)"],
+          "reasoning": "Links record to user for RLS"
+        },
+        {
           "name": "column_name",
-          "type": "VARCHAR|TEXT|INTEGER|etc",
+          "type": "VARCHAR|TEXT|INTEGER|DECIMAL|SMALLINT|etc",
           "nullable": true,  // DEFAULT TO TRUE for most columns
           "length": number (optional),
+          "precision": number (optional),
+          "scale": number (optional),
           "constraints": ["FOREIGN KEY", "UNIQUE", etc],
           "reasoning": "Why this column exists and why it's nullable/not nullable"
         },
@@ -394,8 +479,27 @@ Required JSON Structure:
         {
           "name": "table_select_policy",
           "operation": "SELECT",
-          "definition": "true",
-          "reasoning": "Access control reasoning"
+          "using": "auth.uid() = user_id",
+          "reasoning": "Users can read their own records"
+        },
+        {
+          "name": "table_insert_policy", 
+          "operation": "INSERT",
+          "with_check": "auth.uid() = user_id",
+          "reasoning": "Users can only insert their own records"
+        },
+        {
+          "name": "table_update_policy",
+          "operation": "UPDATE", 
+          "using": "auth.uid() = user_id",
+          "with_check": "auth.uid() = user_id",
+          "reasoning": "Users can only update their own records"
+        },
+        {
+          "name": "table_delete_policy",
+          "operation": "DELETE",
+          "using": "auth.uid() = user_id", 
+          "reasoning": "Users can only delete their own records"
         }
       ]
     }
@@ -413,10 +517,13 @@ Required JSON Structure:
 
 CRITICAL REQUIREMENTS:
 - Every table MUST have: id (UUID PRIMARY KEY), created_at, updated_at
+- Include user_id (UUID) column when user ownership is needed for RLS
 - Foreign keys MUST be UUID type and reference existing tables
 - Use snake_case for all names
-- Include at least one RLS policy per table (can be permissive for now)
+- Include ALL 4 RLS policies (SELECT, INSERT, UPDATE, DELETE) per table
+- Use appropriate Supabase Auth patterns in RLS policies
 - DEFAULT TO NULLABLE for most columns to avoid data import issues
+- Use proper PostgreSQL types (UUID for IDs, TIMESTAMPTZ for timestamps, etc.)
 - Provide clear reasoning for design decisions
 - Output valid JSON only (no markdown formatting)`;
   }
@@ -681,31 +788,72 @@ Format your response as JSON with the following structure:
             constraints: ['PRIMARY KEY', 'DEFAULT uuid_generate_v4()'],
             reasoning: 'UUID primary key following PostgreSQL best practices',
           },
-          // Map CSV columns
-          ...result.columns.map(col => {
-            const colName = this.sanitizeColumnName(col.name);
-            // Handle special foreign key cases
-            const isForeignKey = colName.endsWith('_id');
-            const isAuthUserRef = colName === 'user_id';
-            
-            return {
-              name: colName,
-              type: isForeignKey ? 'UUID' as const : (col.inferredType || 'TEXT') as PostgresType,
-              nullable: col.nullCount > 0 || col.nullCount / col.totalCount > 0.01, // Be more lenient
-              constraints: isAuthUserRef 
-                ? ['REFERENCES auth.users(id)']
-                : isForeignKey && !isAuthUserRef 
-                  ? [`REFERENCES ${colName.replace('_id', '')}s(id)`] 
-                  : [],
-              reasoning: `Inferred from CSV data analysis. ${
-                isAuthUserRef 
-                  ? 'Supabase auth user reference detected.' 
-                  : isForeignKey 
+          // Add user_id for RLS if not present
+          {
+            name: 'user_id',
+            type: 'UUID' as const,
+            nullable: true,
+            constraints: ['REFERENCES auth.users(id)'],
+            reasoning: 'Links record to user for RLS policies and data ownership',
+          },
+                    // Map CSV columns with improved type detection
+          ...result.columns
+            .filter(col => {
+              const colName = this.sanitizeColumnName(col.name);
+              return colName !== 'id' && colName !== 'user_id';
+            })
+            .map(col => {
+              const colName = this.sanitizeColumnName(col.name);
+              
+              // Improved type detection
+              let type: PostgresType = 'TEXT';
+              const constraints: string[] = [];
+              let precision: number | undefined;
+              let scale: number | undefined;
+              let length: number | undefined;
+              
+              // Check for foreign key patterns
+              const isForeignKey = colName.endsWith('_id') && colName !== 'user_id';
+              
+              if (isForeignKey) {
+                type = 'UUID';
+                constraints.push(`REFERENCES ${colName.replace('_id', '')}s(id)`);
+              } else if (colName.includes('email')) {
+                type = 'VARCHAR';
+                length = 255;
+              } else if (colName.includes('year') || colName.includes('count') || colName.includes('number')) {
+                type = 'SMALLINT';
+              } else if (colName.includes('latitude') || colName.includes('longitude')) {
+                type = 'DECIMAL';
+                precision = 10;
+                scale = 6;
+              } else if (colName.includes('price') || colName.includes('amount') || colName.includes('cost')) {
+                type = 'NUMERIC';
+                precision = 10;
+                scale = 2;
+              } else if (col.inferredType === 'INTEGER') {
+                type = 'INTEGER';
+              } else if (col.inferredType === 'BOOLEAN') {
+                type = 'BOOLEAN';
+              } else if (col.inferredType && col.inferredType !== 'TEXT') {
+                type = col.inferredType as PostgresType;
+              }
+              
+              return {
+                name: colName,
+                type,
+                nullable: col.nullCount > 0 || col.nullCount / col.totalCount > 0.01,
+                ...(length && { length }),
+                ...(precision && { precision }),
+                ...(scale && { scale }),
+                constraints,
+                reasoning: `Inferred from CSV data analysis. ${
+                  isForeignKey 
                     ? 'Foreign key relationship detected.' 
                     : ''
-              } Null rate: ${(col.nullCount / col.totalCount * 100).toFixed(1)}% - Made nullable for easier data import`,
-            };
-          }),
+                } Null rate: ${(col.nullCount / col.totalCount * 100).toFixed(1)}% - Made nullable for easier data import`,
+              };
+            }),
           // Add timestamps
           {
             name: 'created_at',
@@ -725,6 +873,12 @@ Format your response as JSON with the following structure:
         relationships: [],
         indexes: [
           {
+            name: `idx_${tableName}_user_id`,
+            columns: ['user_id'],
+            unique: false,
+            reasoning: 'Performance index for user-based queries and RLS policies',
+          },
+          {
             name: `idx_${tableName}_created_at`,
             columns: ['created_at'],
             unique: false,
@@ -735,13 +889,14 @@ Format your response as JSON with the following structure:
           {
             name: `${tableName}_select_policy`,
             operation: 'SELECT' as const,
-            definition: 'true',
-            reasoning: 'Allow public read access',
+            definition: 'auth.uid() = user_id',
+            using: 'auth.uid() = user_id',
+            reasoning: 'Users can read their own records',
           },
           {
             name: `${tableName}_insert_policy`,
             operation: 'INSERT' as const,
-            definition: 'auth.uid() IS NOT NULL',
+            definition: 'auth.uid() = user_id',
             with_check: 'auth.uid() = user_id',
             reasoning: 'Users can only insert their own records',
           },
@@ -749,6 +904,7 @@ Format your response as JSON with the following structure:
             name: `${tableName}_update_policy`,
             operation: 'UPDATE' as const,
             definition: 'auth.uid() = user_id',
+            using: 'auth.uid() = user_id',
             with_check: 'auth.uid() = user_id',
             reasoning: 'Users can only update their own records',
           },
@@ -756,6 +912,7 @@ Format your response as JSON with the following structure:
             name: `${tableName}_delete_policy`,
             operation: 'DELETE' as const,
             definition: 'auth.uid() = user_id',
+            using: 'auth.uid() = user_id',
             reasoning: 'Users can only delete their own records',
           },
         ],
@@ -765,7 +922,7 @@ Format your response as JSON with the following structure:
 
     return {
       confidence: 0.6,
-      reasoning: 'FALLBACK: Rule-based analysis used due to AI service failure. Tables were not normalized or split.',
+      reasoning: 'FALLBACK: Rule-based analysis used due to AI service failure. Tables were not normalized or split. Added user_id columns and proper RLS policies for user ownership.',
       tables,
       suggestions: [
         {
@@ -780,6 +937,13 @@ Format your response as JSON with the following structure:
           description: 'Validate nullable columns and add appropriate constraints',
           impact: 'high',
           reasoning: 'Data quality constraints ensure database integrity',
+          actionable: true,
+        },
+        {
+          type: 'normalization',
+          description: 'Consider normalizing tables if they contain multiple entities',
+          impact: 'high',
+          reasoning: 'AI analysis was not available to perform automatic normalization',
           actionable: true,
         },
       ],
