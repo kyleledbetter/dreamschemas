@@ -20,7 +20,7 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen bg-background size-full flex flex-col">
+    <div className="min-h-screen bg-background size-full flex flex-col relative">
       {/* Header */}
       <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="flex h-16 items-center justify-between px-6 max-w-7xl mx-auto">
@@ -185,6 +185,20 @@ export default function DashboardLayout({
           </div>
         </div>
       </footer>
+      <div className="fixed bottom-4 right-4 z-50">
+        <a
+          href="https://bolt.new/?rid=os72mi"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block transition-all duration-300 hover:shadow-2xl"
+        >
+          <img
+            src="https://storage.bolt.army/white_circle_360x360.png"
+            alt="Built with Bolt.new badge"
+            className="w-20 h-20 md:w-28 md:h-28 rounded-full shadow-lg  bolt-badge bolt-badge-intro"
+          />
+        </a>
+      </div>
     </div>
   );
 }
